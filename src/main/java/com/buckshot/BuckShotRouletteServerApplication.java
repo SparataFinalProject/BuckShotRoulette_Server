@@ -1,4 +1,4 @@
-package com.buckshot.buckshotroulette_server;
+package com.buckshot;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

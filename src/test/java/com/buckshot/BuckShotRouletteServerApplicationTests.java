@@ -1,4 +1,4 @@
-package com.buckshot.buckshotroulette_server;
+package com.buckshot;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
