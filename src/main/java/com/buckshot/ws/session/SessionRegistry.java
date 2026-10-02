@@ -1,4 +1,4 @@
-package com.buckshot.ws;
+package com.buckshot.ws.session;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

@@ -1,6 +1,7 @@
 package com.buckshot.ws;
 
 import com.buckshot.ws.packet.Packet;
+import com.buckshot.ws.session.SessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

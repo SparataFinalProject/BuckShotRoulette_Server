@@ -1,5 +1,7 @@
 package com.buckshot.ws;
 
+import com.buckshot.ws.routing.MessageRouter;
+import com.buckshot.ws.session.SessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
