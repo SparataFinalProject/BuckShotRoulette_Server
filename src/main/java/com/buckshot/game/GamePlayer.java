@@ -1,8 +1,7 @@
 package com.buckshot.game;
 
-/**
- * 게임 한 판 안에서의 플레이어 상태. hp는 0~{@link GameRules#MAX_HP} 범위를 벗어나지 않는다.
- */
+//게임 한 판 안에서의 플레이어 상태. hp는 0~{@link GameRules#MAX_HP} 범위를 벗어나지 않는다.
+
 public class GamePlayer {
 
     private final long userId;
@@ -30,7 +29,7 @@ public class GamePlayer {
         return hp <= 0;
     }
 
-    /** 피해. 0 아래로 내려가지 않는다. */
+    // 피해. 0 아래로 내려가지 않는다.
     public void takeDamage(int amount) {
         if (amount < 0) {
             throw new IllegalArgumentException("damage must be >= 0: " + amount);
@@ -38,7 +37,7 @@ public class GamePlayer {
         hp = Math.max(0, hp - amount);
     }
 
-    /** 회복. 최대 hp를 넘지 않는다. */
+    // 회복. 최대 hp를 넘지 않는다.
     public void heal(int amount) {
         if (amount < 0) {
             throw new IllegalArgumentException("heal must be >= 0: " + amount);
