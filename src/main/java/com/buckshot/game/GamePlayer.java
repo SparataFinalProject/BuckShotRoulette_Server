@@ -12,7 +12,14 @@ public class GamePlayer {
     private final String nickname;
     private final Item[] slots = new Item[GameRules.MAX_ITEM_SLOTS];   // 빈 칸은 null
     private int hp = GameRules.MAX_HP;
-    private int handcuffTurns;
+    private HandcuffState handcuff = HandcuffState.NONE;
+
+    /** 원작 수갑: 채워지면 LOCKED, 차례를 한 번 건너뛰면 SKIPPED(아직 걸려 있음), 그다음 차례 시작에 부서져 NONE */
+    private enum HandcuffState {
+        NONE,
+        LOCKED,
+        SKIPPED
+    }
 
     public GamePlayer(long userId, String nickname) {
         this.userId = userId;
@@ -35,8 +42,11 @@ public class GamePlayer {
         return hp <= 0;
     }
 
+    /**
+     * 앞으로 건너뛸 턴 수 (패킷 handcuffTurns). 수갑은 중첩되지 않으므로 0 또는 1.
+     */
     public int handcuffTurns() {
-        return handcuffTurns;
+        return handcuff == HandcuffState.LOCKED ? 1 : 0;
     }
 
     /**
@@ -62,21 +72,53 @@ public class GamePlayer {
     // ---- 수갑 ----
 
     /**
-     * 수갑을 찬다. 잠긴 턴 +1 (중첩 가능).
+     * 수갑이 걸려 있는지 (건너뛰기 전, 건너뛴 뒤 부서지기 전 모두). 걸려 있는 사람에게는 수갑을 또 채울 수 없다 (중첩 불가).
      */
-    public void addHandcuff() {
-        handcuffTurns++;
+    public boolean isHandcuffed() {
+        return handcuff != HandcuffState.NONE;
     }
 
     /**
-     * 잠긴 턴이 남아 있으면 1 줄이고 true (= 이번 턴은 건너뜀). 없으면 false.
+     * 수갑을 채운다. 이미 걸려 있으면 아무것도 바꾸지 않고 false.
      */
-    public boolean consumeHandcuff() {
-        if (handcuffTurns <= 0) {
+    public boolean addHandcuff() {
+        if (isHandcuffed()) {
             return false;
         }
-        handcuffTurns--;
+        handcuff = HandcuffState.LOCKED;
         return true;
+    }
+
+    /**
+     * 이 사람의 차례가 시작될 때 먼저 부른다. 수갑이 막 채워진 상태면 이번 턴을 건너뛰고 true
+     * (수갑은 아직 걸려 있어서, 다음 차례 시작에 {@link #breakHandcuff()}로 부서질 때까지 상대가 또 채울 수 없다).
+     */
+    public boolean consumeHandcuff() {
+        if (handcuff != HandcuffState.LOCKED) {
+            return false;
+        }
+        handcuff = HandcuffState.SKIPPED;
+        return true;
+    }
+
+    /**
+     * 이미 한 번 건너뛴 뒤 다음 차례가 시작될 때 수갑을 부순다. 부숴졌으면 true (그 차례는 그대로 진행).
+     */
+    public boolean breakHandcuff() {
+        if (handcuff != HandcuffState.SKIPPED) {
+            return false;
+        }
+        handcuff = HandcuffState.NONE;
+        return true;
+    }
+
+    /**
+     * 수갑을 푼다 (다시 장전할 때). 걸려 있었으면 true.
+     */
+    public boolean clearHandcuff() {
+        boolean was = isHandcuffed();
+        handcuff = HandcuffState.NONE;
+        return was;
     }
 
     // ---- 아이템 칸 ----

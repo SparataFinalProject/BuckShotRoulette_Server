@@ -1,5 +1,6 @@
 package com.buckshot.devtest;
 
+import com.buckshot.game.GameRules;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.GameOverReason;
 import com.buckshot.ws.packet.ItemType;
@@ -37,12 +38,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class DevGameRoom {
 
-    static final int HP = 6;
-    private static final int SLOT_COUNT = 8;
-    private static final int[] ITEMS_BY_GRANT = { 2, 3, 4 };
-    // 장전 순서별 탄 구성 {공포탄, 실탄} (메인게임 ShellTray.LoadSchedule과 같음). 5번째부터는 계속 {4, 4}
-    private static final int[][] LOAD_SCHEDULE = { { 2, 1 }, { 2, 2 }, { 2, 3 }, { 3, 3 } };
-    private static final int[] LOAD_SCHEDULE_REST = { 4, 4 };
+    static final int HP = GameRules.MAX_HP;
+    private static final int SLOT_COUNT = GameRules.MAX_ITEM_SLOTS;
     private static final String[] ITEM_POOL = {
             ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS };
 
@@ -192,13 +189,13 @@ public class DevGameRoom {
         }
 
         if (round > 0) {
-            int count = ITEMS_BY_GRANT[Math.min(grantCount, ITEMS_BY_GRANT.length - 1)];
+            int count = GameRules.itemsPerGrant(grantCount);
             grantCount++;
             for (long id : users) grant(id, count);
         }
 
-        // 메인게임과 같은 고정 장전표 (탄이 꽂히는 순서만 무작위)
-        int[] composition = round < LOAD_SCHEDULE.length ? LOAD_SCHEDULE[round] : LOAD_SCHEDULE_REST;
+        // 메인게임과 같은 고정 장전표 (GameRules, 탄이 꽂히는 순서만 무작위)
+        int[] composition = GameRules.shellComposition(round);
         int blank = composition[0];
         int live = composition[1];
         List<String> list = new ArrayList<>();

@@ -39,7 +39,7 @@ class FireRulesTest {
     }
 
     @Test
-    @DisplayName("판정 결과를 hp에 반영: 톱 + 실탄이면 4 → 2")
+    @DisplayName("판정 결과를 hp에 반영: 톱 + 실탄이면 최대 hp에서 2 줄어든다")
     void damageAppliesToHp() {
         GamePlayer victim = new GamePlayer(2L, "b");
 
