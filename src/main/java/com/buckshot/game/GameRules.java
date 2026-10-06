@@ -10,6 +10,7 @@ public final class GameRules {
 
     public static final int LIVE_DAMAGE = 1;
     public static final int SAW_MULTIPLIER = 2;
+    public static final int CIGARETTE_HEAL = 1;
 
     private GameRules() {
     }

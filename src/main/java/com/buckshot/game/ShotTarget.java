@@ -9,7 +9,9 @@ public enum ShotTarget {
     SELF,
     OPPONENT;
 
-    /** 패킷 문자열을 대상으로. 모르는 값이나 null이면 비어 있음. */
+    /**
+     * 패킷 문자열을 대상으로. 모르는 값이나 null이면 비어 있음.
+     */
     public static Optional<ShotTarget> from(String value) {
         for (ShotTarget target : values()) {
             if (target.name().equals(value)) {

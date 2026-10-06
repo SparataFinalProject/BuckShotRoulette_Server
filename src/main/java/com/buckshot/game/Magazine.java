@@ -19,13 +19,17 @@ public class Magazine {
         this.blankCount = order.size() - liveCount;
     }
 
-    /** 약실 탄 확인 (돋보기). 탄을 빼지 않는다. */
+    /**
+     * 약실 탄 확인 (돋보기). 탄을 빼지 않는다.
+     */
     public Shell peek() {
         requireNotEmpty();
         return shells.peekFirst();
     }
 
-    /** 약실 탄을 꺼낸다 (발사·맥주). */
+    /**
+     * 약실 탄을 꺼낸다 (발사·맥주).
+     */
     public Shell pop() {
         requireNotEmpty();
         return shells.pollFirst();
@@ -39,12 +43,16 @@ public class Magazine {
         return shells.isEmpty();
     }
 
-    /** 장전 시점 실탄 수 (ROUND_START로 공개되는 값). */
+    /**
+     * 장전 시점 실탄 수 (ROUND_START로 공개되는 값).
+     */
     public int liveCount() {
         return liveCount;
     }
 
-    /** 장전 시점 공포탄 수. */
+    /**
+     * 장전 시점 공포탄 수.
+     */
     public int blankCount() {
         return blankCount;
     }
