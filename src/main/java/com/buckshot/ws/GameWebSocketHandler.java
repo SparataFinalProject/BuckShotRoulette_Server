@@ -2,8 +2,10 @@ package com.buckshot.ws;
 
 import com.buckshot.ws.routing.MessageRouter;
 import com.buckshot.ws.session.SessionRegistry;
+import com.buckshot.ws.session.UserDisconnectedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -17,6 +19,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
 
     private final SessionRegistry sessionRegistry;
     private final MessageRouter messageRouter;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -46,6 +49,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         Long userId = (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);
         if (userId != null && sessionRegistry.unregister(userId, session)) {
             log.info("disconnected userId={} code={}", userId, status.getCode());
+            eventPublisher.publishEvent(new UserDisconnectedEvent(userId));
         }
     }
 
