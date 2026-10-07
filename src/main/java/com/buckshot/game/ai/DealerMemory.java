@@ -1,6 +1,12 @@
 package com.buckshot.game.ai;
 
+import com.buckshot.game.GamePlayer;
+import com.buckshot.game.GameRules;
+import com.buckshot.game.Item;
 import com.buckshot.game.Shell;
+import com.buckshot.game.SlotItem;
+import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * 딜러가 지금까지 본 것으로 약실 상태를 기억한다.
@@ -42,5 +48,22 @@ public class DealerMemory {
 
     public void onPeeked(Shell shell) {
         knownShell = shell;
+    }
+
+    public DealerObservation observe(GamePlayer me, GamePlayer opponent, boolean sawActive) {
+        Set<Item> usable = EnumSet.noneOf(Item.class);
+        for (SlotItem slot : me.items()) {
+            Item item = slot.item();
+            if (item == Item.SAW && sawActive) {
+                continue;   // 쇠톱 중복 불가
+            }
+            if (item == Item.HANDCUFFS && opponent.isHandcuffed()) {
+                continue;   // 이미 수갑 찬 상대에게는 못 씀
+            }
+            usable.add(item);
+        }
+        return new DealerObservation(
+                me.hp(), opponent.hp(), GameRules.MAX_HP, liveCount,
+                blankCount, knownShell, sawActive, opponent.isHandcuffed(), usable);
     }
 }
