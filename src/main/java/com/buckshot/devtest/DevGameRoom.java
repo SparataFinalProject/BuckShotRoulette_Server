@@ -72,7 +72,7 @@ public class DevGameRoom {
 
     /** GAME_START를 보낸 직후 호출: 첫 라운드를 시작한다. */
     public synchronized void begin() {
-        startRound();
+        startRound(users[random.nextInt(2)]);
     }
 
     /** 게임 중 한쪽이 나가면(연결 끊김) 남은 쪽이 바로 승리한다. 이미 끝난 게임이면 아무것도 하지 않는다. */
@@ -123,10 +123,10 @@ public class DevGameRoom {
             over = true;
             broadcast(PacketType.GAME_OVER,
                     new GameOverPacket(other(victim), GameOverReason.HP_ZERO, new PlayerResult[0], false));
-        } else if (shells.isEmpty()) {
-            startRound();
         } else {
-            startTurn(extraTurn ? userId : other);
+            long next = extraTurn ? userId : other;
+            if (shells.isEmpty()) startRound(next);
+            else startTurn(next);
         }
     }
 
@@ -177,12 +177,13 @@ public class DevGameRoom {
                 userId, slot, item, myHp, shells.size(), sawed, handcuffedUserId, handcuffTurns, beerShell));
         log.info("[dev] item room={} user={} item={} slot={}", users[0] + "v" + users[1], userId, item, slot);
 
-        if (ItemType.BEER.equals(item) && shells.isEmpty()) startRound();
+        if (ItemType.BEER.equals(item) && shells.isEmpty()) startRound(userId);
     }
 
     // ───────── 진행 ─────────
 
-    private void startRound() {
+    // firstTurnUser: 첫 라운드는 무작위, 이후 라운드는 탄이 떨어진 턴의 다음 차례를 그대로 이어 간다
+    private void startRound(long firstTurnUser) {
         for (long id : users) {
             cuffed.put(id, false);
             cuffSkipped.put(id, false);
@@ -208,7 +209,7 @@ public class DevGameRoom {
         round++;
         log.info("[dev] round {} shells(server only)={}", round, list);
         broadcast(PacketType.ROUND_START, new RoundStartPacket(round, live, blank));
-        startTurn(users[random.nextInt(2)]);
+        startTurn(firstTurnUser);
     }
 
     // 빈 칸에 무작위로 놓는다 (칸이 모자라면 남는 아이템은 버림)
