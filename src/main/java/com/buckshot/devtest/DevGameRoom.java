@@ -12,6 +12,7 @@ import com.buckshot.ws.packet.dto.PlayerResult;
 import com.buckshot.ws.packet.s2c.ErrorPacket;
 import com.buckshot.ws.packet.s2c.FireResultPacket;
 import com.buckshot.ws.packet.s2c.GameOverPacket;
+import com.buckshot.ws.packet.s2c.ItemPlacedPacket;
 import com.buckshot.ws.packet.s2c.ItemsGrantedPacket;
 import com.buckshot.ws.packet.s2c.OpponentAimPacket;
 import com.buckshot.ws.packet.s2c.OpponentGunPickupPacket;
@@ -26,13 +27,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * 개발용 임시 게임 방: 두 클라이언트가 한 판을 끝까지 진행해 보는 용도.
  * 규칙은 클라이언트의 MultiMockInGameClient와 같다 (원작 규칙: 체력 6, 수갑은 한 번 건너뛰고 다음 차례에 부숨, 이미 찬 상대에겐 못 씀(중첩 불가),
  * 쇠톱은 다음 한 발 피해 2, 첫 라운드는 아이템 없음, 다시 장전하면 수갑이 풀림). 게임 중 한쪽이 나가면 남은 쪽 승리(DISCONNECT).
- * 패킷 순서: (아이템 지급 ×2) -> ROUND_START -> TURN_START. 맥주로 뺀 탄은 ITEM_USED.shell로 둘 다에게 공개한다 (DevItemUsedPacket).
+ * 패킷 순서: ITEMS_GRANTED ×2 (종류만, slot -1) -> 두 플레이어가 PLACE_ITEM으로 칸을 하나씩 고름 (상대에게 ITEM_PLACED)
+ * -> 둘 다 다 놓거나 제한 시간이 지나면(남은 것은 서버가 앞쪽 빈 칸에 놓고 ITEM_PLACED auto) ROUND_START -> TURN_START.
+ * 맥주로 뺀 탄은 ITEM_USED.shell로 둘 다에게 공개한다 (DevItemUsedPacket).
  * 정식 GameRoom(ServerDesign 6.4)과 팀원의 game 규칙 코어가 연결되면 지운다. 방 단위 synchronized로 두 플레이어 요청을 직렬화한다.
  */
 @Slf4j
@@ -42,6 +48,13 @@ public class DevGameRoom {
     private static final int SLOT_COUNT = GameRules.MAX_ITEM_SLOTS;
     private static final String[] ITEM_POOL = {
             ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS };
+    // 아이템을 다 놓을 때까지 기다리는 시간 (ITEMS_GRANTED를 보낸 때부터. 클라는 받기 전에 탄피 치우기·수갑 풀기·카메라 이동을 먼저 한다)
+    private static final int PLACE_TIME_LIMIT_SEC = 25;
+    private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "dev-place-timer");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final PacketSender sender;
     private final long[] users;
@@ -53,6 +66,13 @@ public class DevGameRoom {
     private final Map<Long, Boolean> cuffed = new HashMap<>();
     private final Map<Long, Boolean> cuffSkipped = new HashMap<>();
     private boolean sawed;
+
+    // 아이템 배치 중: 지급받았지만 아직 칸을 안 고른 아이템 (앞부터 차례로 놓는다)
+    private final Map<Long, Deque<String>> toPlace = new HashMap<>();
+    private final Map<Long, Integer> placedCount = new HashMap<>();
+    private boolean placing;
+    private int placingId;          // 지난 배치의 타이머가 늦게 실행돼도 무시하려고
+    private long nextFirstTurn;     // 배치가 끝나면 시작할 턴
     private long turnUserId;
     private int round;
     private int turnNumber;
@@ -180,6 +200,22 @@ public class DevGameRoom {
         if (ItemType.BEER.equals(item) && shells.isEmpty()) startRound(userId);
     }
 
+    /** 지급받은 아이템 중 다음 하나를 slot에 놓는다. 고른 칸은 상대에게만 알린다 (내 화면은 이미 놓았다). */
+    public synchronized void placeItem(long userId, int slot) {
+        Deque<String> remaining = toPlace.get(userId);
+        if (over || !placing || remaining == null || remaining.isEmpty()) {
+            error(userId, "INVALID_STATE", PacketType.PLACE_ITEM);   // 시간 초과로 서버가 이미 놓은 뒤 늦게 온 요청 등
+            return;
+        }
+        if (slot < 0 || slot >= SLOT_COUNT || items.get(userId)[slot] != null) {
+            error(userId, "INVALID_SLOT", PacketType.PLACE_ITEM);
+            return;
+        }
+
+        place(userId, slot, false);
+        if (allPlaced()) finishPlacing();
+    }
+
     // ───────── 진행 ─────────
 
     // firstTurnUser: 첫 라운드는 무작위, 이후 라운드는 탄이 떨어진 턴의 다음 차례를 그대로 이어 간다
@@ -189,12 +225,59 @@ public class DevGameRoom {
             cuffSkipped.put(id, false);
         }
 
-        if (round > 0) {
-            int count = GameRules.itemsPerGrant(grantCount);
-            grantCount++;
-            for (long id : users) grant(id, count);
+        if (round == 0) {   // 첫 라운드는 아이템 없음
+            loadShells(firstTurnUser);
+            return;
         }
 
+        int count = GameRules.itemsPerGrant(grantCount);
+        grantCount++;
+        turnUserId = 0;   // 배치 중에는 누구의 턴도 아니다 (발사·아이템 사용 거절)
+        placing = true;
+        placingId++;
+        nextFirstTurn = firstTurnUser;
+        for (long id : users) grant(id, count);
+
+        if (allPlaced()) {   // 둘 다 칸이 꽉 차서 받은 게 없음
+            finishPlacing();
+            return;
+        }
+        int id = placingId;
+        TIMER.schedule(() -> placeTimeout(id), PLACE_TIME_LIMIT_SEC, TimeUnit.SECONDS);
+    }
+
+    // 제한 시간: 남은 아이템을 앞쪽 빈 칸부터 놓고 둘 다에게 알린 뒤 장전으로 넘어간다
+    private synchronized void placeTimeout(int id) {
+        if (over || !placing || id != placingId) return;
+        for (long userId : users) {
+            String[] slots = items.get(userId);
+            for (int s = 0; s < SLOT_COUNT && !toPlace.get(userId).isEmpty(); s++)
+                if (slots[s] == null) place(userId, s, true);
+        }
+        log.info("[dev] place timeout room={}", users[0] + "v" + users[1]);
+        finishPlacing();
+    }
+
+    private void place(long userId, int slot, boolean auto) {
+        String item = toPlace.get(userId).pollFirst();
+        items.get(userId)[slot] = item;
+        int index = placedCount.merge(userId, 1, Integer::sum) - 1;
+        var packet = new ItemPlacedPacket(userId, index, slot, item, auto);
+        if (auto) broadcast(PacketType.ITEM_PLACED, packet);
+        else sender.sendTo(other(userId), PacketType.ITEM_PLACED, packet);
+    }
+
+    private boolean allPlaced() {
+        for (long id : users) if (!toPlace.get(id).isEmpty()) return false;
+        return true;
+    }
+
+    private void finishPlacing() {
+        placing = false;
+        loadShells(nextFirstTurn);
+    }
+
+    private void loadShells(long firstTurnUser) {
         // 메인게임과 같은 고정 장전표 (GameRules, 탄이 꽂히는 순서만 무작위)
         int[] composition = GameRules.shellComposition(round);
         int blank = composition[0];
@@ -212,21 +295,22 @@ public class DevGameRoom {
         startTurn(firstTurnUser);
     }
 
-    // 빈 칸에 무작위로 놓는다 (칸이 모자라면 남는 아이템은 버림)
+    // 종류만 정해 보낸다 (slot -1, 칸은 플레이어가 PLACE_ITEM으로 고름). 빈 칸보다 많으면 남는 아이템은 버림
     private void grant(long userId, int count) {
-        String[] slots = items.get(userId);
-        List<Integer> free = new ArrayList<>();
-        for (int s = 0; s < SLOT_COUNT; s++) if (slots[s] == null) free.add(s);
-        Collections.shuffle(free, random);
+        int free = 0;
+        for (String s : items.get(userId)) if (s == null) free++;
+        int n = Math.min(count, free);
 
-        List<ItemSlot> granted = new ArrayList<>();
-        for (int i = 0; i < count && i < free.size(); i++) {
+        Deque<String> types = new ArrayDeque<>();
+        ItemSlot[] granted = new ItemSlot[n];
+        for (int i = 0; i < n; i++) {
             String item = ITEM_POOL[random.nextInt(ITEM_POOL.length)];
-            slots[free.get(i)] = item;
-            granted.add(new ItemSlot(free.get(i), item));
+            types.add(item);
+            granted[i] = new ItemSlot(-1, item);
         }
-        broadcast(PacketType.ITEMS_GRANTED,
-                new ItemsGrantedPacket(userId, granted.toArray(new ItemSlot[0]), Math.max(0, count - free.size())));
+        toPlace.put(userId, types);
+        placedCount.put(userId, 0);
+        broadcast(PacketType.ITEMS_GRANTED, new ItemsGrantedPacket(userId, granted, count - n));
     }
 
     // 수갑을 찬 사람의 첫 차례는 건너뛰고(상대에게 넘어감), 그다음 차례에 수갑을 부수고 진행

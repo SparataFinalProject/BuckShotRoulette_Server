@@ -155,6 +155,11 @@ public class DevMatchService {
         if (room != null) room.useItem(userId, slot);
     }
 
+    public void placeItem(long userId, int slot) {
+        DevGameRoom room = roomOf(userId);
+        if (room != null) room.placeItem(userId, slot);
+    }
+
     private synchronized DevGameRoom roomOf(long userId) {
         DevGameRoom room = roomByUser.get(userId);
         if (room == null) log.info("[dev] request outside game userId={}", userId);
