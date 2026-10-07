@@ -1,5 +1,6 @@
 package com.buckshot.ws;
 
+import com.buckshot.matchmaking.service.MatchmakingService;
 import com.buckshot.ws.routing.MessageRouter;
 import com.buckshot.ws.session.SessionRegistry;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
 
     private final SessionRegistry sessionRegistry;
     private final MessageRouter messageRouter;
+    private final MatchmakingService matchmakingService;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -45,6 +47,15 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         Long userId = (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);
         if (userId != null && sessionRegistry.unregister(userId, session)) {
+            boolean removedFromQueue =
+                    matchmakingService.removeFromQueue(userId);
+
+            if (removedFromQueue) {
+                log.info(
+                        "match queue removed on disconnect userId={}",
+                        userId
+                );
+            }
             log.info("disconnected userId={} code={}", userId, status.getCode());
         }
     }
