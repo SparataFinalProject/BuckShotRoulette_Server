@@ -9,6 +9,8 @@ import java.util.UUID;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -30,6 +32,11 @@ public class MatchmakingService {
     // userId -> gameId
     // 중복 매칭 요청 및 취소-성공 경합 확인용
     private final Map<Long, String> matchedGameByUser =
+            new HashMap<>();
+
+    // GAME_READY를 보낸 사용자
+// gameId -> ready userIds
+    private final Map<String, Set<Long>> readyUsersByGame =
             new HashMap<>();
 
     public synchronized JoinResult join(long userId) {
@@ -74,6 +81,11 @@ public class MatchmakingService {
         pendingMatches.put(
                 gameId,
                 pendingMatch
+        );
+
+        readyUsersByGame.put(
+                gameId,
+                new HashSet<>()
         );
 
         matchedGameByUser.put(
@@ -142,6 +154,40 @@ public class MatchmakingService {
         return waitingUsers.remove(userId) != null;
     }
 
+    public synchronized DisconnectedMatch removePendingMatchOnDisconnect(
+            long userId
+    ) {
+        String gameId = matchedGameByUser.get(userId);
+
+        if (gameId == null) {
+            return null;
+        }
+
+        PendingMatch match = pendingMatches.get(gameId);
+
+        if (match == null) {
+            return null;
+        }
+
+        long opponentUserId;
+
+        if (match.playerAId() == userId) {
+            opponentUserId = match.playerBId();
+        } else if (match.playerBId() == userId) {
+            opponentUserId = match.playerAId();
+        } else {
+            return null;
+        }
+
+        // 준비 중이던 매칭의 정보 정리
+        pendingMatches.remove(gameId);
+        matchedGameByUser.remove(match.playerAId());
+        matchedGameByUser.remove(match.playerBId());
+        readyUsersByGame.remove(gameId);
+
+        return new DisconnectedMatch(gameId, opponentUserId);
+    }
+
     public synchronized boolean isQueued(long userId) {
         return waitingUsers.containsKey(userId);
     }
@@ -150,6 +196,72 @@ public class MatchmakingService {
             String gameId
     ) {
         return pendingMatches.get(gameId);
+    }
+
+
+    public synchronized ReadyResult markReady(
+            long userId,
+            String gameId
+    ) {
+        String matchedGameId =
+                matchedGameByUser.get(userId);
+
+        // 이 사용자가 현재 매칭된 게임이 없거나
+        // 다른 gameId를 보냈으면 잘못된 요청
+        if (matchedGameId == null ||
+                !matchedGameId.equals(gameId)) {
+
+            throw new BusinessException(
+                    ErrorCode.INVALID_STATE
+            );
+        }
+
+        PendingMatch pendingMatch =
+                pendingMatches.get(gameId);
+
+        if (pendingMatch == null) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_STATE
+            );
+        }
+
+        // 혹시 다른 게임의 userId를 조작해서 보내는 경우 방어
+        boolean isPlayer =
+                pendingMatch.playerAId() == userId ||
+                        pendingMatch.playerBId() == userId;
+
+        if (!isPlayer) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_STATE
+            );
+        }
+
+        Set<Long> readyUsers =
+                readyUsersByGame.computeIfAbsent(
+                        gameId,
+                        key -> new HashSet<>()
+                );
+
+        // HashSet이라 같은 userId가 두 번 들어오지 않는다.
+        boolean newlyReady =
+                readyUsers.add(userId);
+
+        boolean allReady =
+                readyUsers.contains(
+                        pendingMatch.playerAId()
+                ) &&
+                        readyUsers.contains(
+                                pendingMatch.playerBId()
+                        );
+
+        return new ReadyResult(
+                gameId,
+                userId,
+                newlyReady,
+                allReady,
+                pendingMatch.playerAId(),
+                pendingMatch.playerBId()
+        );
     }
 
     public record JoinResult(
@@ -174,6 +286,22 @@ public class MatchmakingService {
             String gameId,
             long playerAId,
             long playerBId
+    ) {
+    }
+
+    public record ReadyResult(
+            String gameId,
+            long userId,
+            boolean newlyReady,
+            boolean allReady,
+            long playerAId,
+            long playerBId
+    ) {
+    }
+
+    public record DisconnectedMatch(
+            String gameId,
+            long opponentUserId
     ) {
     }
 

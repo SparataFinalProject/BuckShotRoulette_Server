@@ -3,6 +3,9 @@ package com.buckshot.ws;
 import com.buckshot.matchmaking.service.MatchmakingService;
 import com.buckshot.ws.routing.MessageRouter;
 import com.buckshot.ws.session.SessionRegistry;
+import com.buckshot.ws.PacketSender;
+import com.buckshot.ws.packet.PacketType;
+import com.buckshot.ws.packet.s2c.MatchCancelledPacket;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -19,6 +22,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
     private final SessionRegistry sessionRegistry;
     private final MessageRouter messageRouter;
     private final MatchmakingService matchmakingService;
+    private final PacketSender packetSender;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -44,20 +48,53 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        Long userId = (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);
-        if (userId != null && sessionRegistry.unregister(userId, session)) {
-            boolean removedFromQueue =
-                    matchmakingService.removeFromQueue(userId);
+    public void afterConnectionClosed(
+            WebSocketSession session,
+            CloseStatus status
+    ) {
+        Long userId = (Long) session.getAttributes()
+                .get(AuthHandshakeInterceptor.ATTR_USER_ID);
 
-            if (removedFromQueue) {
-                log.info(
-                        "match queue removed on disconnect userId={}",
-                        userId
-                );
-            }
-            log.info("disconnected userId={} code={}", userId, status.getCode());
+        if (userId == null ||
+                !sessionRegistry.unregister(userId, session)) {
+            return;
         }
+
+        // 기존 기능: 매칭 대기 중인 사용자를 큐에서 제거
+        boolean removedFromQueue =
+                matchmakingService.removeFromQueue(userId);
+
+        if (removedFromQueue) {
+            log.info(
+                    "match queue removed on disconnect userId={}",
+                    userId
+            );
+        }
+
+        // 추가 기능: MATCH_FOUND 이후 준비 중 연결 종료
+        MatchmakingService.DisconnectedMatch disconnectedMatch =
+                matchmakingService.removePendingMatchOnDisconnect(userId);
+
+        if (disconnectedMatch != null) {
+            log.info(
+                    "pending match cancelled gameId={} disconnectedUserId={} opponentUserId={}",
+                    disconnectedMatch.gameId(),
+                    userId,
+                    disconnectedMatch.opponentUserId()
+            );
+
+            packetSender.sendTo(
+                    disconnectedMatch.opponentUserId(),
+                    PacketType.MATCH_CANCELLED,
+                    new MatchCancelledPacket("OPPONENT_DISCONNECTED")
+            );
+        }
+
+        log.info(
+                "disconnected userId={} code={}",
+                userId,
+                status.getCode()
+        );
     }
 
     private static long userId(WebSocketSession session) {
