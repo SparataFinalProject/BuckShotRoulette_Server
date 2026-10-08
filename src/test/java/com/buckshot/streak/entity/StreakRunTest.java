@@ -12,7 +12,9 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class StreakRunTest {
-    private final StreakRun run = new StreakRun(1L, 1, LocalDateTime.now());
+    private final LocalDateTime first = LocalDateTime.of(2026, 10, 1, 12, 0);
+    private final LocalDateTime later = LocalDateTime.of(2026, 10, 2, 12, 0);
+    private final StreakRun run = new StreakRun(1L, 1, first);
 
     private GameSummary game(int turns, Map<Item, Integer> items) {
         return new GameSummary(turns, 5, 4, 1, 3, items);
@@ -53,9 +55,7 @@ public class StreakRunTest {
     @Test
     @DisplayName("끝내면 진행 중이 아니고 끝난 시각이 남는다")
     void endStopsRun() {
-        LocalDateTime at = LocalDateTime.now();
-
-        run.end(at);
+        run.end(later);
 
         assertFalse(run.isOngoing());
         assertNotNull(run.getEndedAt());
@@ -65,7 +65,7 @@ public class StreakRunTest {
     @DisplayName("끝난 도전에는 승리를 기록할 수 없고 기록도 바뀌지 않는다")
     void cannotRecordWinAfterEnd() {
         run.recordWin(game(10, Map.of(Item.BEER, 2)));
-        run.end(LocalDateTime.now());
+        run.end(later);
 
         assertEquals(1, run.getWins());
         assertThrows(IllegalStateException.class,

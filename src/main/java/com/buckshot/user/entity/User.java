@@ -1,5 +1,6 @@
 package com.buckshot.user.entity;
 
+import com.buckshot.streak.entity.StreakRun;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -39,10 +40,14 @@ public class User {
     private int losses;
 
     @Column(nullable = false)
-    private int currentStreak;
+    private int bestStreak;
 
     @Column(nullable = false)
-    private int bestStreak;
+    private int bestStreakTurns;
+
+    private LocalDateTime bestAchievedAt;
+
+    private Long bestRunId;
 
     @CreationTimestamp
     @Column(updatable = false)
@@ -60,12 +65,28 @@ public class User {
         this.nickname = nickname;
     }
 
-    public void winStreakGame() {
-        currentStreak++;
-        bestStreak = Math.max(currentStreak, bestStreak);
+    /**
+     * 이 도전이 지금 최고 기록보다 좋으면 최고 기록을 바꾼다.
+     * 좋다 = 연승이 더 길거나, 연승이 같고 턴이 더 적을 때.
+     * 이길 때마다 부른다 (도중에 나가도 기록이 남도록).
+     *
+     * @return 최고 기록을 바꿨으면 true (GAME_OVER의 isNewBest)
+     */
+    public boolean offerBest(StreakRun run, LocalDateTime now) {
+        if (!isBetterThanBest(run)) {
+            return false;
+        }
+        bestStreak = run.getWins();
+        bestStreakTurns = run.getTurns();
+        bestAchievedAt = now;
+        bestRunId = run.getId();
+        return true;
     }
 
-    public void loseStreakGame() {
-        currentStreak = 0;
+    private boolean isBetterThanBest(StreakRun run) {
+        if (run.getWins() > bestStreak) {
+            return true;
+        }
+        return run.getWins() == bestStreak && run.getTurns() < bestStreakTurns;
     }
 }
