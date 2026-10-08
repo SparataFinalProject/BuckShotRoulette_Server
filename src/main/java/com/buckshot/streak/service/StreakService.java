@@ -2,6 +2,7 @@ package com.buckshot.streak.service;
 
 import com.buckshot.common.error.BusinessException;
 import com.buckshot.common.error.ErrorCode;
+import com.buckshot.level.LevelPolicy;
 import com.buckshot.streak.GameResult;
 import com.buckshot.streak.GameSummary;
 import com.buckshot.streak.StreakResult;
@@ -51,7 +52,10 @@ public class StreakService {
         }
 
         int streak = (result == GameResult.WIN) ? run.getWins() : 0;
+        int expGained = LevelPolicy.streakExp(result, streak, summary.turns());
 
-        return new StreakResult(streak, user.getBestStreak(), isNewBest);
+        user.gainExp(expGained);
+
+        return new StreakResult(streak, user.getBestStreak(), isNewBest, expGained);
     }
 }

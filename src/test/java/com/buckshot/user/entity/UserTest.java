@@ -104,4 +104,22 @@ class UserTest {
         assertEquals(20, user.getBestStreakTurns());
         assertEquals(later, user.getBestAchievedAt());
     }
+
+    @Test
+    @DisplayName("경험치는 쌓인다")
+    void gainExpAddsUp() {
+        user.gainExp(22);
+        user.gainExp(5);
+
+        assertEquals(27, user.getExp());
+    }
+
+    @Test
+    @DisplayName("음수 경험치는 거부하고 그대로 둔다")
+    void negativeExpRejected() {
+        user.gainExp(10);
+
+        assertThrows(IllegalArgumentException.class, () -> user.gainExp(-1));
+        assertEquals(10, user.getExp());
+    }
 }

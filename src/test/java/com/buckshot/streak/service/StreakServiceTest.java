@@ -77,7 +77,8 @@ class StreakServiceTest {
 
         StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10));
 
-        assertEquals(new StreakResult(1, 1, true), result);
+        assertEquals(new StreakResult(1, 1, true, 22), result);   // 1연승 10턴: 20 + 2
+        assertEquals(22, user.getExp());
         verify(runRepository).save(any(StreakRun.class));
         assertEquals(10L, user.getBestRunId());
     }
@@ -106,7 +107,8 @@ class StreakServiceTest {
 
         StreakResult result = service.onGameEnd(1L, GameResult.LOSE, summary(10));
 
-        assertEquals(new StreakResult(0, 3, false), result);
+        assertEquals(new StreakResult(0, 3, false, 5), result);   // 패배 10턴: 5
+        assertEquals(5, user.getExp());
         assertFalse(run.isOngoing());
         assertEquals(3, run.getWins());   // 진 판은 도전 합계에 안 들어간다
     }
