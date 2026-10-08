@@ -19,6 +19,9 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -28,7 +31,8 @@ import org.springframework.stereotype.Service;
  * 개발용 임시 매칭: 두 클라이언트를 인게임 씬까지 들여보내는 것만 확인한다.
  * MATCH_JOIN 두 명이 모이면 MATCH_FOUND, 둘 다 GAME_READY를 보내면 GAME_START까지만 보낸다.
  * 이후 진행은 DevGameRoom이 맡는다. 끊김: 대기 중이면 대기자에서 빼고, 준비 중이면 상대에게 MATCH_CANCELLED(OPPONENT_DISCONNECTED),
- * 게임 중이면 남은 쪽 승리(GAME_OVER DISCONNECT). 대기열 타임아웃·취소는 없다. 정식 매칭(ServerDesign 6.3)과 GameRoom이 생기면 지운다.
+ * 게임 중이면 남은 쪽 승리(GAME_OVER DISCONNECT). MATCH_FOUND 뒤 8초 안에 둘 다 준비하지 않으면 둘 다에게 MATCH_CANCELLED(READY_TIMEOUT).
+ * 대기열 타임아웃·취소는 없다. 정식 매칭(ServerDesign 6.3)과 GameRoom이 생기면 지운다.
  */
 @Slf4j
 @Service
@@ -38,7 +42,12 @@ public class DevMatchService {
     private static final int HP = DevGameRoom.HP;
     private static final int MAX_ITEM_SLOTS = 8;
     private static final int QUEUE_TIMEOUT_SEC = 60;
-    private static final int READY_TIMEOUT_SEC = 15;
+    private static final int READY_TIMEOUT_SEC = 8;
+    private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "dev-ready-timer");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final PacketSender packetSender;
     private final UserService userService;
@@ -47,6 +56,8 @@ public class DevMatchService {
     private Long waitingUserId;
     private final Map<String, long[]> games = new HashMap<>();
     private final Map<String, Set<Long>> ready = new HashMap<>();
+    // 준비 시간이 지나 취소된 게임. 취소를 씬 로딩 중에 받아 놓친 클라가 늦게 GAME_READY를 보내면 다시 알려 준다
+    private final Set<String> expired = new HashSet<>();
     private final Map<Long, DevGameRoom> roomByUser = new HashMap<>();   // 새 게임이 시작되면 덮어쓴다
 
     public void join(long userId) {
@@ -81,6 +92,23 @@ public class DevMatchService {
         log.info("[dev] match found gameId={} users={},{}", gameId, pair[0], pair[1]);
         packetSender.sendTo(pair[0], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[1]), READY_TIMEOUT_SEC));
         packetSender.sendTo(pair[1], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[0]), READY_TIMEOUT_SEC));
+        TIMER.schedule(() -> readyTimeout(gameId), READY_TIMEOUT_SEC, TimeUnit.SECONDS);
+    }
+
+    // MATCH_FOUND 뒤 READY_TIMEOUT_SEC 안에 둘 다 GAME_READY를 보내지 않으면 둘 다에게 매칭 취소.
+    // 이미 시작했거나 끊김으로 취소된 게임이면 아무것도 하지 않는다
+    private void readyTimeout(String gameId) {
+        long[] pair;
+        synchronized (this) {
+            if (!ready.containsKey(gameId)) return;
+            ready.remove(gameId);
+            pair = games.remove(gameId);
+            expired.add(gameId);
+        }
+        log.info("[dev] ready timeout gameId={} users={},{}", gameId, pair[0], pair[1]);
+        var cancelled = new MatchCancelledPacket(MatchCancelReason.READY_TIMEOUT);
+        packetSender.sendTo(pair[0], PacketType.MATCH_CANCELLED, cancelled);
+        packetSender.sendTo(pair[1], PacketType.MATCH_CANCELLED, cancelled);
     }
 
     public void ready(long userId, String gameId) {
@@ -88,6 +116,11 @@ public class DevMatchService {
         synchronized (this) {
             pair = games.get(gameId);
             Set<Long> readyUsers = ready.get(gameId);
+            if (pair == null && expired.remove(gameId)) {
+                log.info("[dev] late ready after timeout userId={} gameId={}", userId, gameId);
+                packetSender.sendTo(userId, PacketType.MATCH_CANCELLED, new MatchCancelledPacket(MatchCancelReason.READY_TIMEOUT));
+                return;
+            }
             if (pair == null || readyUsers == null || (pair[0] != userId && pair[1] != userId)) {
                 log.info("[dev] ready ignored userId={} gameId={}", userId, gameId);
                 return;
