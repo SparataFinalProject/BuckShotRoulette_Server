@@ -38,6 +38,12 @@ public class User {
     @Column(nullable = false)
     private int losses;
 
+    @Column(nullable = false)
+    private int currentStreak;
+
+    @Column(nullable = false)
+    private int bestStreak;
+
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;
@@ -52,5 +58,14 @@ public class User {
 
     public void changeNickname(String nickname) {
         this.nickname = nickname;
+    }
+
+    public void winStreakGame() {
+        currentStreak++;
+        bestStreak = Math.max(currentStreak, bestStreak);
+    }
+
+    public void loseStreakGame() {
+        currentStreak = 0;
     }
 }
