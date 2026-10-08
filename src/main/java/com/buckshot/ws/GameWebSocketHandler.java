@@ -3,11 +3,12 @@ package com.buckshot.ws;
 import com.buckshot.matchmaking.service.MatchmakingService;
 import com.buckshot.ws.routing.MessageRouter;
 import com.buckshot.ws.session.SessionRegistry;
-import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.packet.s2c.MatchCancelledPacket;
+import com.buckshot.ws.session.UserDisconnectedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -21,6 +22,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
 
     private final SessionRegistry sessionRegistry;
     private final MessageRouter messageRouter;
+    private final ApplicationEventPublisher eventPublisher;
     private final MatchmakingService matchmakingService;
     private final PacketSender packetSender;
 
@@ -47,6 +49,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         messageRouter.route(new WsContext(userId(session)), message.getPayload());
     }
 
+
     @Override
     public void afterConnectionClosed(
             WebSocketSession session,
@@ -60,7 +63,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        // 기존 기능: 매칭 대기 중인 사용자를 큐에서 제거
+        // 1. 매칭 대기 중 연결 종료
         boolean removedFromQueue =
                 matchmakingService.removeFromQueue(userId);
 
@@ -71,7 +74,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             );
         }
 
-        // 추가 기능: MATCH_FOUND 이후 준비 중 연결 종료
+        // 2. MATCH_FOUND 이후 준비 중 연결 종료
         MatchmakingService.DisconnectedMatch disconnectedMatch =
                 matchmakingService.removePendingMatchOnDisconnect(userId);
 
@@ -83,19 +86,34 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                     disconnectedMatch.opponentUserId()
             );
 
-            packetSender.sendTo(
-                    disconnectedMatch.opponentUserId(),
-                    PacketType.MATCH_CANCELLED,
-                    new MatchCancelledPacket("OPPONENT_DISCONNECTED")
-            );
+            // 상대방 알림 전송이 실패해도 아래 이벤트 발행은 계속 진행
+            try {
+                packetSender.sendTo(
+                        disconnectedMatch.opponentUserId(),
+                        PacketType.MATCH_CANCELLED,
+                        new MatchCancelledPacket("OPPONENT_DISCONNECTED")
+                );
+            } catch (Exception e) {
+                log.error(
+                        "failed to notify opponent gameId={} opponentUserId={}",
+                        disconnectedMatch.gameId(),
+                        disconnectedMatch.opponentUserId(),
+                        e
+                );
+            }
         }
 
+        // 3. 연결 종료 로그
         log.info(
                 "disconnected userId={} code={}",
                 userId,
                 status.getCode()
         );
+
+        // 4. dev 브랜치의 연결 종료 이벤트 발행
+        eventPublisher.publishEvent(new UserDisconnectedEvent(userId));
     }
+
 
     private static long userId(WebSocketSession session) {
         return (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);

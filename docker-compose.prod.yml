@@ -1,0 +1,56 @@
+# 클라우드 VM(Oracle 등)에서 서버 + MySQL + Redis를 한 번에 올린다.
+#   docker compose -f docker-compose.prod.yml up -d --build
+# 필요: 같은 폴더의 .env (DB_PASSWORD, JWT_SECRET). 예시는 .env.example 참고.
+#
+# 외부에는 8080만 공개한다. MySQL/Redis는 컨테이너 안쪽 네트워크에서만 쓰고 호스트 포트로 열지 않는다
+# (개발용 docker-compose.yml은 3307/6379를 호스트에 여는데, 인터넷에 노출된 서버에서는 절대 그러면 안 된다. Redis는 비밀번호가 없다).
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?.env에 DB_PASSWORD가 필요합니다}
+      MYSQL_DATABASE: buckshot_roulette
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD:?.env에 DB_PASSWORD가 필요합니다}
+      JWT_SECRET: ${JWT_SECRET:?.env에 JWT_SECRET이 필요합니다 (32자 이상)}
+      # application.properties의 localhost 주소를 컨테이너 이름으로 덮어쓴다
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/buckshot_roulette?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+      SPRING_DATA_REDIS_HOST: redis
+      # 한글 로그가 깨지지 않게 UTF-8, 메모리는 VM이 작아도 버티도록 제한
+      JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Xmx768m
+      TZ: Asia/Seoul
+    ports:
+      - "8080:8080"
+
+volumes:
+  mysql-data:
+  redis-data:
