@@ -66,9 +66,15 @@ public class DevMatchService {
             pair = new long[] { waitingUserId, userId };
             waitingUserId = null;
         }
+        startPair(pair[0], pair[1]);
+    }
 
+    /** 두 사람을 바로 짝지어 MATCH_FOUND를 보낸다 (자동 매칭, 방에서 게임 시작). */
+    public void startPair(long a, long b) {
+        long[] pair = new long[] { a, b };
         String gameId = UUID.randomUUID().toString();
         synchronized (this) {
+            if (waitingUserId != null && (waitingUserId == a || waitingUserId == b)) waitingUserId = null;
             games.put(gameId, pair);
             ready.put(gameId, new HashSet<>());
         }
