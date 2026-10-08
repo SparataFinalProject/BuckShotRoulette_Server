@@ -60,8 +60,9 @@ public class DevMatchService {
     private final Random random = new Random();
     private final Map<String, long[]> games = new HashMap<>();
     private final Map<String, Set<Long>> ready = new HashMap<>();
-    // 준비 시간이 지나 취소된 게임. 취소를 씬 로딩 중에 받아 놓친 클라가 늦게 GAME_READY를 보내면 다시 알려 준다
-    private final Set<String> expired = new HashSet<>();
+    // 게임 시작 전에 취소된 게임 -> 취소 사유. 취소를 페이드·씬 로딩 중에 받아 놓친 클라가 늦게 GAME_READY를 보내면 다시 알려 준다
+    // (방에서 시작한 뒤 로비 페이드 중에는 MATCH_CANCELLED를 받는 곳이 없다)
+    private final Map<String, String> cancelled = new HashMap<>();
     private final Map<Long, DevGameRoom> roomByUser = new HashMap<>();   // 새 게임이 시작되면 덮어쓴다
 
     // 먼저 기다리는 사람: 상대 마스크를 3개 중 무작위로 정해 MATCH_QUEUED로 알려 준다 (기다리는 동안 그 마스크를 보여 줌).
@@ -123,7 +124,7 @@ public class DevMatchService {
             if (!ready.containsKey(gameId)) return;
             ready.remove(gameId);
             pair = games.remove(gameId);
-            expired.add(gameId);
+            cancelled.put(gameId, MatchCancelReason.READY_TIMEOUT);
         }
         log.info("[dev] ready timeout gameId={} users={},{}", gameId, pair[0], pair[1]);
         var cancelled = new MatchCancelledPacket(MatchCancelReason.READY_TIMEOUT);
@@ -141,9 +142,10 @@ public class DevMatchService {
         synchronized (this) {
             pair = games.get(gameId);
             Set<Long> readyUsers = ready.get(gameId);
-            if (pair == null && expired.remove(gameId)) {
-                log.info("[dev] late ready after timeout userId={} gameId={}", userId, gameId);
-                packetSender.sendTo(userId, PacketType.MATCH_CANCELLED, new MatchCancelledPacket(MatchCancelReason.READY_TIMEOUT));
+            String cancelReason = pair == null ? cancelled.remove(gameId) : null;
+            if (cancelReason != null) {
+                log.info("[dev] late ready after cancel userId={} gameId={} reason={}", userId, gameId, cancelReason);
+                packetSender.sendTo(userId, PacketType.MATCH_CANCELLED, new MatchCancelledPacket(cancelReason));
                 return;
             }
             if (pair == null || readyUsers == null || (pair[0] != userId && pair[1] != userId)) {
@@ -185,6 +187,7 @@ public class DevMatchService {
                 if (pending && (pair[0] == userId || pair[1] == userId)) {
                     cancelTo = pair[0] == userId ? pair[1] : pair[0];
                     ready.remove(game.getKey());
+                    cancelled.put(game.getKey(), MatchCancelReason.OPPONENT_DISCONNECTED);
                     it.remove();
                 }
             }
