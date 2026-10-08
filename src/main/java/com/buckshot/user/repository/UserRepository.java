@@ -21,4 +21,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * 레이팅이 이 값보다 높은 사람 수 (내 순위 = 이 값 + 1).
      */
     long countByRatingGreaterThan(int rating);
+
+    /**
+     * 누적 경험치 상위 50명. 같으면 먼저 가입한 사람이 위.
+     */
+    List<User> findTop50ByOrderByExpDescIdAsc();
+
+    /**
+     * 경험치가 이 값보다 많은 사람 수 (내 순위 = 이 값 + 1).
+     */
+    long countByExpGreaterThan(int exp);
 }

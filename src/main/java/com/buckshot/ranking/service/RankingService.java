@@ -27,9 +27,18 @@ public class RankingService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         return switch (type) {
             case RATING -> ratingRanking(me);
-            case LEVEL, STREAK -> throw new UnsupportedOperationException(type + "탭은 아직");
+            case LEVEL -> levelRanking(me);
+            case STREAK -> throw new UnsupportedOperationException(type + " 탭은 아직");
         };
 
+    }
+
+    private RankingResponse levelRanking(User me) {
+        List<User> top = userRepository.findTop50ByOrderByExpDescIdAsc();
+        int myRank = (int) userRepository.countByExpGreaterThan(me.getExp()) + 1;
+        return new RankingResponse(
+                rankEntries(top, User::getExp),
+                RankingEntry.of(me, myRank, me.getExp()));
     }
 
     private RankingResponse ratingRanking(User me) {

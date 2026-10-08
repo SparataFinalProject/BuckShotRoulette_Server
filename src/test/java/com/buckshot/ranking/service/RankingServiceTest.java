@@ -102,4 +102,60 @@ class RankingServiceTest {
 
         assertEquals(ErrorCode.USER_NOT_FOUND, e.getErrorCode());
     }
+
+    /** 경험치가 exp인 유저 (레이팅은 레벨 탭과 상관없으므로 1000 고정). */
+    private User userWithExp(long id, int exp) {
+        User user = user(id, 1000);
+        user.gainExp(exp);
+        return user;
+    }
+
+    @Test
+    @DisplayName("레벨 탭은 누적 경험치 순, 같으면 같은 순위 (1, 2, 2, 4)이고 레벨이 함께 보인다")
+    void levelTopRanksByExp() {
+        User a = userWithExp(1L, 600);
+        User b = userWithExp(2L, 300);
+        User c = userWithExp(3L, 300);
+        User d = userWithExp(4L, 0);
+        when(userRepository.findById(4L)).thenReturn(Optional.of(d));
+        when(userRepository.findTop50ByOrderByExpDescIdAsc()).thenReturn(List.of(a, b, c, d));
+        when(userRepository.countByExpGreaterThan(0)).thenReturn(3L);
+
+        RankingResponse response = service.ranking(RankingType.LEVEL, 4L);
+
+        assertEquals(List.of(1, 2, 2, 4), response.top().stream().map(RankingEntry::rank).toList());
+        assertEquals(List.of(600, 300, 300, 0), response.top().stream().map(RankingEntry::score).toList());
+        assertEquals(List.of(4, 3, 3, 1), response.top().stream().map(RankingEntry::level).toList());
+    }
+
+    @Test
+    @DisplayName("레벨이 같아도 경험치가 많으면 위 (같은 레벨이라고 공동 순위가 아니다)")
+    void levelSameLevelMoreExpIsHigher() {
+        User more = userWithExp(1L, 590);   // 레벨 3
+        User less = userWithExp(2L, 350);   // 레벨 3
+        when(userRepository.findById(2L)).thenReturn(Optional.of(less));
+        when(userRepository.findTop50ByOrderByExpDescIdAsc()).thenReturn(List.of(more, less));
+        when(userRepository.countByExpGreaterThan(350)).thenReturn(1L);
+
+        RankingResponse response = service.ranking(RankingType.LEVEL, 2L);
+
+        assertEquals(List.of(1, 2), response.top().stream().map(RankingEntry::rank).toList());
+        assertEquals(2, response.me().rank());
+        assertEquals(3, response.me().level());
+    }
+
+    @Test
+    @DisplayName("레벨 탭의 내 순위는 나보다 경험치가 많은 사람 수 + 1")
+    void myLevelRank() {
+        User me = userWithExp(1L, 120);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(me));
+        when(userRepository.findTop50ByOrderByExpDescIdAsc()).thenReturn(List.of());
+        when(userRepository.countByExpGreaterThan(120)).thenReturn(5L);
+
+        RankingEntry entry = service.ranking(RankingType.LEVEL, 1L).me();
+
+        assertEquals(6, entry.rank());
+        assertEquals(120, entry.score());
+        assertEquals(2, entry.level());
+    }
 }
