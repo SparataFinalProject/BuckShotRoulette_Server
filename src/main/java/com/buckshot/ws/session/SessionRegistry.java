@@ -1,5 +1,6 @@
 package com.buckshot.ws.session;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
@@ -30,5 +31,10 @@ public class SessionRegistry {
 
     public WebSocketSession find(long userId) {
         return sessions.get(userId);
+    }
+
+    /** 지금 연결된 모든 세션 (끊김 감지용 복사본) */
+    public List<WebSocketSession> all() {
+        return List.copyOf(sessions.values());
     }
 }
