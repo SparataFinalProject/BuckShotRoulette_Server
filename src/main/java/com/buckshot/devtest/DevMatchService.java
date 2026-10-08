@@ -17,6 +17,7 @@ import com.buckshot.ws.session.UserDisconnectedEvent;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -43,6 +44,7 @@ public class DevMatchService {
     private static final int MAX_ITEM_SLOTS = 8;
     private static final int QUEUE_TIMEOUT_SEC = 60;
     private static final int READY_TIMEOUT_SEC = 8;
+    private static final int SKIN_COUNT = 3;   // 클라이언트 MultiGameManager.skins (Respirator, GasMask, WeldingMask)
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "dev-ready-timer");
         t.setDaemon(true);
@@ -54,34 +56,52 @@ public class DevMatchService {
     private final SessionRegistry sessionRegistry;
 
     private Long waitingUserId;
+    private int waitingSkin;   // 기다리는 사람 화면에 미리 보여 준 상대 마스크 = 나중에 들어오는 사람의 마스크
+    private final Random random = new Random();
     private final Map<String, long[]> games = new HashMap<>();
     private final Map<String, Set<Long>> ready = new HashMap<>();
     // 준비 시간이 지나 취소된 게임. 취소를 씬 로딩 중에 받아 놓친 클라가 늦게 GAME_READY를 보내면 다시 알려 준다
     private final Set<String> expired = new HashSet<>();
     private final Map<Long, DevGameRoom> roomByUser = new HashMap<>();   // 새 게임이 시작되면 덮어쓴다
 
+    // 먼저 기다리는 사람: 상대 마스크를 3개 중 무작위로 정해 MATCH_QUEUED로 알려 준다 (기다리는 동안 그 마스크를 보여 줌).
+    // 나중에 들어온 사람: 그 마스크가 자기 마스크가 되고, 기다리던 사람의 마스크는 나머지 두 개 중에서 무작위로 정한다
     public void join(long userId) {
-        long[] pair;
+        long waiter;
+        int joinerSkin;
+        int waiterSkin;
         synchronized (this) {
-            packetSender.sendTo(userId, PacketType.MATCH_QUEUED, new MatchQueuedPacket(System.currentTimeMillis(), QUEUE_TIMEOUT_SEC));
             // 대기 중에 연결이 끊긴 유저(Play를 끈 클라 등)는 버린다 (끊김 처리가 없어서 여기서 확인)
             if (waitingUserId != null && sessionRegistry.find(waitingUserId) == null) {
                 log.info("[dev] drop disconnected waiting userId={}", waitingUserId);
                 waitingUserId = null;
             }
             if (waitingUserId == null || waitingUserId == userId) {
+                if (waitingUserId == null) waitingSkin = random.nextInt(SKIN_COUNT);
                 waitingUserId = userId;
-                log.info("[dev] match queued userId={}", userId);
+                packetSender.sendTo(userId, PacketType.MATCH_QUEUED,
+                        new MatchQueuedPacket(System.currentTimeMillis(), QUEUE_TIMEOUT_SEC, waitingSkin));
+                log.info("[dev] match queued userId={} opponentSkin={}", userId, waitingSkin);
                 return;
             }
-            pair = new long[] { waitingUserId, userId };
+            waiter = waitingUserId;
+            joinerSkin = waitingSkin;
+            waiterSkin = otherSkin(joinerSkin);
             waitingUserId = null;
+            packetSender.sendTo(userId, PacketType.MATCH_QUEUED,
+                    new MatchQueuedPacket(System.currentTimeMillis(), QUEUE_TIMEOUT_SEC, waiterSkin));
         }
-        startPair(pair[0], pair[1]);
+        startPair(waiter, userId, waiterSkin, joinerSkin);
     }
 
-    /** 두 사람을 바로 짝지어 MATCH_FOUND를 보낸다 (자동 매칭, 방에서 게임 시작). */
+    /** 두 사람을 바로 짝지어 MATCH_FOUND를 보낸다 (방에서 게임 시작). 마스크는 서로 다른 두 개를 무작위로 */
     public void startPair(long a, long b) {
+        int skinB = random.nextInt(SKIN_COUNT);
+        startPair(a, b, otherSkin(skinB), skinB);
+    }
+
+    // skinA, skinB: 각자의 마스크 (상대 화면에 보이는 것)
+    private void startPair(long a, long b, int skinA, int skinB) {
         long[] pair = new long[] { a, b };
         String gameId = UUID.randomUUID().toString();
         synchronized (this) {
@@ -90,8 +110,8 @@ public class DevMatchService {
             ready.put(gameId, new HashSet<>());
         }
         log.info("[dev] match found gameId={} users={},{}", gameId, pair[0], pair[1]);
-        packetSender.sendTo(pair[0], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[1]), READY_TIMEOUT_SEC));
-        packetSender.sendTo(pair[1], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[0]), READY_TIMEOUT_SEC));
+        packetSender.sendTo(pair[0], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[1]), READY_TIMEOUT_SEC, skinB));
+        packetSender.sendTo(pair[1], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[0]), READY_TIMEOUT_SEC, skinA));
         TIMER.schedule(() -> readyTimeout(gameId), READY_TIMEOUT_SEC, TimeUnit.SECONDS);
     }
 
@@ -109,6 +129,11 @@ public class DevMatchService {
         var cancelled = new MatchCancelledPacket(MatchCancelReason.READY_TIMEOUT);
         packetSender.sendTo(pair[0], PacketType.MATCH_CANCELLED, cancelled);
         packetSender.sendTo(pair[1], PacketType.MATCH_CANCELLED, cancelled);
+    }
+
+    // 주어진 마스크를 뺀 나머지 중 하나
+    private int otherSkin(int skin) {
+        return (skin + 1 + random.nextInt(SKIN_COUNT - 1)) % SKIN_COUNT;
     }
 
     public void ready(long userId, String gameId) {
