@@ -175,11 +175,26 @@ public class DevMatchService {
     public void onDisconnected(UserDisconnectedEvent event) {
         long userId = event.userId();
         DevGameRoom room;
-        long cancelTo = 0;
         synchronized (this) {
             if (waitingUserId != null && waitingUserId == userId) waitingUserId = null;
+            room = roomByUser.remove(userId);
+        }
+        cancelPending(userId, MatchCancelReason.OPPONENT_DISCONNECTED);   // 준비 중(아직 GAME_START 전)에 나가면 상대는 매칭 취소
+        if (room != null) room.disconnect(userId);   // 게임 중이면 남은 쪽 승리, 이미 끝난 방이면 무시된다
+    }
 
-            // 준비 중(아직 GAME_START 전)에 나가면 상대는 매칭 취소
+    /**
+     * 방장이 게임 시작을 누른 순간 참가자가 방 나가기를 눌러, 서버가 게임 시작을 먼저 처리한 경우 (DevRoomService.leave).
+     * 나간 사람은 MATCH_FOUND를 무시하므로 시작 전 매칭을 취소하고 상대(방장)에게 알린다.
+     */
+    public void leavePending(long userId) {
+        cancelPending(userId, MatchCancelReason.OPPONENT_LEFT);
+    }
+
+    // userId가 들어 있는 시작 전 매칭을 지우고 상대에게 MATCH_CANCELLED(reason). 늦게 온 GAME_READY에도 같은 사유로 알리도록 기억해 둔다
+    private void cancelPending(long userId, String reason) {
+        long cancelTo = 0;
+        synchronized (this) {
             for (var it = games.entrySet().iterator(); it.hasNext(); ) {
                 var game = it.next();
                 long[] pair = game.getValue();
@@ -187,19 +202,14 @@ public class DevMatchService {
                 if (pending && (pair[0] == userId || pair[1] == userId)) {
                     cancelTo = pair[0] == userId ? pair[1] : pair[0];
                     ready.remove(game.getKey());
-                    cancelled.put(game.getKey(), MatchCancelReason.OPPONENT_DISCONNECTED);
+                    cancelled.put(game.getKey(), reason);
                     it.remove();
                 }
             }
-
-            room = roomByUser.remove(userId);
         }
-
-        if (cancelTo != 0) {
-            log.info("[dev] ready cancelled, userId={} left, notify {}", userId, cancelTo);
-            packetSender.sendTo(cancelTo, PacketType.MATCH_CANCELLED, new MatchCancelledPacket(MatchCancelReason.OPPONENT_DISCONNECTED));
-        }
-        if (room != null) room.disconnect(userId);   // 게임 중이면 남은 쪽 승리, 이미 끝난 방이면 무시된다
+        if (cancelTo == 0) return;
+        log.info("[dev] ready cancelled, userId={} {}, notify {}", userId, reason, cancelTo);
+        packetSender.sendTo(cancelTo, PacketType.MATCH_CANCELLED, new MatchCancelledPacket(reason));
     }
 
     public void fire(long userId, String target) {

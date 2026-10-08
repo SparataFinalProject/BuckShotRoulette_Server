@@ -100,12 +100,18 @@ public class DevRoomService {
         }
     }
 
-    public synchronized void leave(long userId) {
-        Room room = roomByUser.get(userId);
-        if (room != null) {
-            removeMember(room, userId);
-            broadcastList();
+    public void leave(long userId) {
+        boolean inRoom;
+        synchronized (this) {
+            Room room = roomByUser.get(userId);
+            inRoom = room != null;
+            if (inRoom) {
+                removeMember(room, userId);
+                broadcastList();
+            }
         }
+        // 방장이 게임 시작을 먼저 눌러 방은 이미 없어졌다: 나간 사람은 MATCH_FOUND를 무시하므로 그 매칭을 취소하고 방장에게 알린다
+        if (!inRoom) devMatchService.leavePending(userId);
         packetSender.sendTo(userId, PacketType.ROOM_LEFT, new DevRoomPackets.Left());
     }
 
