@@ -16,6 +16,7 @@ public enum ErrorCode {
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 유저입니다."),
     NICKNAME_INVALID(HttpStatus.BAD_REQUEST, "올바르지 않은 닉네임 형식입니다."),
     NICKNAME_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다."),
+    STREAK_RUN_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 연승 기록입니다."),
 
     UNKNOWN_TYPE(HttpStatus.BAD_REQUEST, "알 수 없는 타입입니다."),
     INVALID_MESSAGE(HttpStatus.BAD_REQUEST, "유효하지 않은 메시지 형식입니다."),

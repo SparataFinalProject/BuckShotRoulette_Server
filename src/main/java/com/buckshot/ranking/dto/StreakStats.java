@@ -22,15 +22,11 @@ public record StreakStats(int turns, double turnsPerWin, double accuracy, int da
         }
         return new StreakStats(
                 user.getBestStreakTurns(),
-                ratio(run.getTurns(), run.getWins()),
-                ratio(run.getCorrectShots() * 100, run.getShots()),
+                StatMath.ratio(run.getTurns(), run.getWins()),
+                StatMath.percent(run.getCorrectShots(), run.getShots()),
                 run.getDamageTaken(),
                 user.getBestAchievedAt(),
                 run.getId());
     }
 
-    /** 0으로 나누지 않는다 (아직 쏜 적이 없으면 0). */
-    private static double ratio(int numerator, int denominator) {
-        return denominator == 0 ? 0 : (double) numerator / denominator;
-    }
 }
