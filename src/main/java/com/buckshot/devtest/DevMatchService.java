@@ -1,5 +1,6 @@
 package com.buckshot.devtest;
 
+import com.buckshot.streak.service.StreakService;
 import com.buckshot.user.dto.PlayerProfileResponse;
 import com.buckshot.user.service.UserService;
 import com.buckshot.ws.PacketSender;
@@ -12,6 +13,7 @@ import com.buckshot.ws.packet.s2c.GameStartPacket;
 import com.buckshot.ws.packet.s2c.MatchCancelledPacket;
 import com.buckshot.ws.packet.s2c.MatchFoundPacket;
 import com.buckshot.ws.packet.s2c.MatchQueuedPacket;
+import com.buckshot.ws.packet.s2c.RankedGameStartPacket;
 import com.buckshot.ws.session.SessionRegistry;
 import com.buckshot.ws.session.UserDisconnectedEvent;
 import java.util.HashMap;
@@ -54,6 +56,7 @@ public class DevMatchService {
     private final PacketSender packetSender;
     private final UserService userService;
     private final SessionRegistry sessionRegistry;
+    private final StreakService streakService;
 
     private Long waitingUserId;
     private int waitingSkin;   // 기다리는 사람 화면에 미리 보여 준 상대 마스크 = 나중에 들어오는 사람의 마스크
@@ -64,6 +67,7 @@ public class DevMatchService {
     // (방에서 시작한 뒤 로비 페이드 중에는 MATCH_CANCELLED를 받는 곳이 없다)
     private final Map<String, String> cancelled = new HashMap<>();
     private final Map<Long, DevGameRoom> roomByUser = new HashMap<>();   // 새 게임이 시작되면 덮어쓴다
+    private final Set<String> rankedGames = new HashSet<>();   // 연승 모드(딜러 상대) 게임 id
 
     // 먼저 기다리는 사람: 상대 마스크를 3개 중 무작위로 정해 MATCH_QUEUED로 알려 준다 (기다리는 동안 그 마스크를 보여 줌).
     // 나중에 들어온 사람: 그 마스크가 자기 마스크가 되고, 기다리던 사람의 마스크는 나머지 두 개 중에서 무작위로 정한다
@@ -116,6 +120,26 @@ public class DevMatchService {
         TIMER.schedule(() -> readyTimeout(gameId), READY_TIMEOUT_SEC, TimeUnit.SECONDS);
     }
 
+    /**
+     * 연승 모드: 대기열 없이 딜러(DevStreakGame.DEALER_ID)와 바로 짝짓는다. 딜러는 처음부터 준비된 것으로 본다.
+     * 이후 흐름(GAME_READY -> GAME_START -> 방)은 1:1과 같다.
+     */
+    public void startRanked(long userId) {
+        String gameId = UUID.randomUUID().toString();
+        synchronized (this) {
+            if (waitingUserId != null && waitingUserId == userId) waitingUserId = null;
+            games.put(gameId, new long[] { userId, DevStreakGame.DEALER_ID });
+            Set<Long> readyUsers = new HashSet<>();
+            readyUsers.add(DevStreakGame.DEALER_ID);
+            ready.put(gameId, readyUsers);
+            rankedGames.add(gameId);
+        }
+        log.info("[streak] ranked match gameId={} userId={}", gameId, userId);
+        packetSender.sendTo(userId, PacketType.MATCH_FOUND,
+                new MatchFoundPacket(gameId, profile(DevStreakGame.DEALER_ID), READY_TIMEOUT_SEC, 0));
+        TIMER.schedule(() -> readyTimeout(gameId), READY_TIMEOUT_SEC, TimeUnit.SECONDS);
+    }
+
     // MATCH_FOUND 뒤 READY_TIMEOUT_SEC 안에 둘 다 GAME_READY를 보내지 않으면 둘 다에게 매칭 취소.
     // 이미 시작했거나 끊김으로 취소된 게임이면 아무것도 하지 않는다
     private void readyTimeout(String gameId) {
@@ -124,6 +148,7 @@ public class DevMatchService {
             if (!ready.containsKey(gameId)) return;
             ready.remove(gameId);
             pair = games.remove(gameId);
+            rankedGames.remove(gameId);
             cancelled.put(gameId, MatchCancelReason.READY_TIMEOUT);
         }
         log.info("[dev] ready timeout gameId={} users={},{}", gameId, pair[0], pair[1]);
@@ -158,15 +183,28 @@ public class DevMatchService {
             ready.remove(gameId);
         }
 
-        var start = new GameStartPacket(gameId, MAX_ITEM_SLOTS, new PlayerState[] { state(pair[0]), state(pair[1]) });
-        packetSender.sendTo(pair[0], PacketType.GAME_START, start);
-        packetSender.sendTo(pair[1], PacketType.GAME_START, start);
-        log.info("[dev] game start gameId={}", gameId);
-
-        var room = new DevGameRoom(packetSender, pair[0], pair[1]);
+        boolean ranked;
         synchronized (this) {
-            roomByUser.put(pair[0], room);
-            roomByUser.put(pair[1], room);
+            ranked = rankedGames.remove(gameId);
+        }
+        var players = new PlayerState[] { state(pair[0]), state(pair[1]) };
+        Object start = ranked
+                ? new RankedGameStartPacket(gameId, MAX_ITEM_SLOTS, players, DevStreakGame.MODE, streakService.currentStreak(pair[0]))
+                : new GameStartPacket(gameId, MAX_ITEM_SLOTS, players);
+        packetSender.sendTo(pair[0], PacketType.GAME_START, start);
+        packetSender.sendTo(pair[1], PacketType.GAME_START, start);   // 딜러면 연결이 없어 보내지 않는다
+        log.info("[dev] game start gameId={} ranked={}", gameId, ranked);
+
+        DevGameRoom room;
+        if (ranked) {
+            var streakGame = new DevStreakGame(pair[0], streakService);
+            room = new DevGameRoom(packetSender, pair[0], pair[1], streakGame);
+            streakGame.attach(room);
+        } else {
+            room = new DevGameRoom(packetSender, pair[0], pair[1]);
+        }
+        synchronized (this) {
+            for (long id : pair) if (id != DevStreakGame.DEALER_ID) roomByUser.put(id, room);   // 딜러 자리는 여러 방이 함께 쓴다
         }
         room.begin();
     }
@@ -244,11 +282,13 @@ public class DevMatchService {
     }
 
     private PlayerProfile profile(long userId) {
+        if (userId == DevStreakGame.DEALER_ID) return new PlayerProfile(userId, "딜러", 0, 0, 0, "");
         PlayerProfileResponse p = userService.getProfile(userId);
         return new PlayerProfile(p.userId(), p.nickname(), p.wins(), p.losses(), p.rating(), p.tier());
     }
 
     private PlayerState state(long userId) {
+        if (userId == DevStreakGame.DEALER_ID) return new PlayerState(userId, "딜러", HP, HP, new ItemSlot[0], 0);
         return new PlayerState(userId, userService.getProfile(userId).nickname(), HP, HP, new ItemSlot[0], 0);
     }
 }

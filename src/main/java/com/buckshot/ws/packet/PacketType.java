@@ -7,6 +7,7 @@ public final class PacketType {
     // C2S
     public static final String MATCH_JOIN = "MATCH_JOIN";
     public static final String MATCH_CANCEL = "MATCH_CANCEL";
+    public static final String RANKED_START = "RANKED_START";   // 연승 모드: 딜러와 바로 한 판 (대기열 없음)
     public static final String GAME_READY = "GAME_READY";
     public static final String USE_ITEM = "USE_ITEM";
     public static final String FIRE = "FIRE";

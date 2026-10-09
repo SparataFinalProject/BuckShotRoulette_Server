@@ -40,6 +40,7 @@ import lombok.extern.slf4j.Slf4j;
  * -> 둘 다 다 놓거나 제한 시간이 지나면(남은 것은 서버가 앞쪽 빈 칸에 놓고 ITEM_PLACED auto) ROUND_START -> TURN_START.
  * 맥주로 뺀 탄은 ITEM_USED.shell로 둘 다에게 공개한다 (DevItemUsedPacket).
  * 정식 GameRoom(ServerDesign 6.4)과 팀원의 game 규칙 코어가 연결되면 지운다. 방 단위 synchronized로 두 플레이어 요청을 직렬화한다.
+ * 연승 모드: 한 자리를 딜러(DevStreakGame.DEALER_ID)로 두고 {@link Listener}로 딜러 행동과 기록 저장을 붙인다 (방 규칙은 그대로).
  */
 @Slf4j
 public class DevGameRoom {
@@ -57,6 +58,7 @@ public class DevGameRoom {
     });
 
     private final PacketSender sender;
+    private final Listener listener;
     private final long[] users;
     private final Random random = new Random();
 
@@ -80,7 +82,12 @@ public class DevGameRoom {
     private boolean over;
 
     public DevGameRoom(PacketSender sender, long userA, long userB) {
+        this(sender, userA, userB, Listener.NONE);
+    }
+
+    public DevGameRoom(PacketSender sender, long userA, long userB, Listener listener) {
         this.sender = sender;
+        this.listener = listener;
         this.users = new long[] { userA, userB };
         for (long id : users) {
             hp.put(id, HP);
@@ -101,8 +108,7 @@ public class DevGameRoom {
         over = true;
         long winner = other(leftUserId);
         log.info("[dev] disconnect room={}v{} left={} winner={}", users[0], users[1], leftUserId, winner);
-        sender.sendTo(winner, PacketType.GAME_OVER,
-                new GameOverPacket(winner, GameOverReason.DISCONNECT, new PlayerResult[0], false));
+        sender.sendTo(winner, PacketType.GAME_OVER, listener.gameOver(winner, GameOverReason.DISCONNECT));
     }
 
     /** 총을 집었다: 판정과 상관없는 연출용 알림이라 내 턴일 때만 상대에게 그대로 전달한다 (틀린 요청은 조용히 무시). */
@@ -118,11 +124,12 @@ public class DevGameRoom {
         sender.sendTo(other(userId), PacketType.OPPONENT_AIM, new OpponentAimPacket(userId, target));
     }
 
-    public synchronized void fire(long userId, String target) {
-        if (!checkTurn(userId, PacketType.FIRE)) return;
+    /** @return 발사했으면 true (차례가 아니거나 대상이 틀리면 false, 에러를 보냄) */
+    public synchronized boolean fire(long userId, String target) {
+        if (!checkTurn(userId, PacketType.FIRE)) return false;
         if (!Target.SELF.equals(target) && !Target.OPPONENT.equals(target)) {
             error(userId, "INVALID_MESSAGE", PacketType.FIRE);
-            return;
+            return false;
         }
 
         long other = other(userId);
@@ -138,35 +145,37 @@ public class DevGameRoom {
         broadcast(PacketType.FIRE_RESULT,
                 new FireResultPacket(userId, victim, shell, damage, victimHp, shells.size(), extraTurn));
         log.info("[dev] fire room={} shooter={} victim={} shell={} hp={}", users[0] + "v" + users[1], userId, victim, shell, victimHp);
+        listener.fired(userId, victim, shell, damage);
 
         if (victimHp <= 0) {
             over = true;
-            broadcast(PacketType.GAME_OVER,
-                    new GameOverPacket(other(victim), GameOverReason.HP_ZERO, new PlayerResult[0], false));
+            broadcast(PacketType.GAME_OVER, listener.gameOver(other(victim), GameOverReason.HP_ZERO));
         } else {
             long next = extraTurn ? userId : other;
             if (shells.isEmpty()) startRound(next);
             else startTurn(next);
         }
+        return true;
     }
 
-    public synchronized void useItem(long userId, int slot) {
-        if (!checkTurn(userId, PacketType.USE_ITEM)) return;
+    /** @return 아이템을 썼으면 true (규칙상 못 쓰면 false, 에러를 보냄) */
+    public synchronized boolean useItem(long userId, int slot) {
+        if (!checkTurn(userId, PacketType.USE_ITEM)) return false;
 
         String[] mine = items.get(userId);
         if (slot < 0 || slot >= SLOT_COUNT || mine[slot] == null) {
             error(userId, "INVALID_SLOT", PacketType.USE_ITEM);
-            return;
+            return false;
         }
         String item = mine[slot];
         long other = other(userId);
         if (ItemType.HANDCUFFS.equals(item) && cuffed.get(other)) {
             error(userId, "INVALID_STATE", PacketType.USE_ITEM);
-            return;
+            return false;
         }
         if (ItemType.SAW.equals(item) && sawed) {
             error(userId, "INVALID_STATE", PacketType.USE_ITEM);
-            return;
+            return false;
         }
 
         mine[slot] = null;
@@ -174,10 +183,13 @@ public class DevGameRoom {
         long handcuffedUserId = 0;
         int handcuffTurns = 0;
         String beerShell = "";
+        String revealedShell = null;
 
         switch (item) {
-            case ItemType.MAGNIFIER ->
-                sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, shells.peekFirst()));
+            case ItemType.MAGNIFIER -> {
+                revealedShell = shells.peekFirst();
+                sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, revealedShell));
+            }
             case ItemType.CIGARETTE -> {
                 myHp = Math.min(HP, myHp + 1);
                 hp.put(userId, myHp);
@@ -196,8 +208,10 @@ public class DevGameRoom {
         broadcast(PacketType.ITEM_USED, new DevItemUsedPacket(
                 userId, slot, item, myHp, shells.size(), sawed, handcuffedUserId, handcuffTurns, beerShell));
         log.info("[dev] item room={} user={} item={} slot={}", users[0] + "v" + users[1], userId, item, slot);
+        listener.itemUsed(userId, item, revealedShell, beerShell);
 
         if (ItemType.BEER.equals(item) && shells.isEmpty()) startRound(userId);
+        return true;
     }
 
     /** 지급받은 아이템 중 다음 하나를 slot에 놓는다. 고른 칸은 상대에게만 알린다 (내 화면은 이미 놓았다). */
@@ -214,6 +228,43 @@ public class DevGameRoom {
 
         place(userId, slot, false);
         if (allPlaced()) finishPlacing();
+    }
+
+    /** 사람이 아닌 자리(딜러)의 남은 아이템을 앞쪽 빈 칸부터 한꺼번에 놓는다. 상대에게 ITEM_PLACED로 알린다. */
+    public synchronized void placeAllFor(long userId) {
+        Deque<String> remaining = toPlace.get(userId);
+        if (over || !placing || remaining == null) return;
+        String[] slots = items.get(userId);
+        for (int s = 0; s < SLOT_COUNT && !remaining.isEmpty(); s++)
+            if (slots[s] == null) place(userId, s, false);
+        if (allPlaced()) finishPlacing();
+    }
+
+    // ───────── 연승 모드(딜러)용 조회 ─────────
+
+    synchronized boolean isOver() {
+        return over;
+    }
+
+    synchronized long turnUserId() {
+        return turnUserId;
+    }
+
+    synchronized int hpOf(long userId) {
+        return hp.get(userId);
+    }
+
+    /** 칸 복사본 (빈 칸은 null). */
+    synchronized String[] itemsOf(long userId) {
+        return items.get(userId).clone();
+    }
+
+    synchronized boolean sawActive() {
+        return sawed;
+    }
+
+    synchronized boolean isCuffed(long userId) {
+        return cuffed.get(userId);
     }
 
     // ───────── 진행 ─────────
@@ -237,6 +288,7 @@ public class DevGameRoom {
         placingId++;
         nextFirstTurn = firstTurnUser;
         for (long id : users) grant(id, count);
+        listener.placingStarted();
 
         if (allPlaced()) {   // 둘 다 칸이 꽉 차서 받은 게 없음
             finishPlacing();
@@ -292,6 +344,7 @@ public class DevGameRoom {
         round++;
         log.info("[dev] round {} shells(server only)={}", round, list);
         broadcast(PacketType.ROUND_START, new RoundStartPacket(round, live, blank));
+        listener.roundStarted(live, blank);
         startTurn(firstTurnUser);
     }
 
@@ -338,6 +391,7 @@ public class DevGameRoom {
         turnUserId = userId;
         turnNumber++;
         broadcast(PacketType.TURN_START, new TurnStartPacket(userId, turnNumber, skipped, 0));
+        listener.turnStarted(userId);
     }
 
     // ───────── 도우미 ─────────
@@ -360,6 +414,34 @@ public class DevGameRoom {
 
     private void broadcast(String type, Object data) {
         for (long id : users) sender.sendTo(id, type, data);
+    }
+
+    /**
+     * 방에서 일어난 일을 바깥(연승 모드)에 알린다. 모두 방의 잠금 안에서 불리므로 오래 걸리는 일은 하지 않는다
+     * (딜러 행동은 다른 스레드로 예약한다). 기본은 아무것도 안 함 = 기존 1:1 방과 같다.
+     */
+    public interface Listener {
+
+        Listener NONE = new Listener() { };
+
+        /** 장전 직후 (실탄·공포탄 개수는 둘 다 아는 정보). */
+        default void roundStarted(int live, int blank) { }
+
+        /** 아이템을 지급하고 배치를 기다리기 시작했다. */
+        default void placingStarted() { }
+
+        /** 차례가 시작됐다 (수갑으로 건너뛴 사람이 아니라 실제로 행동할 사람). */
+        default void turnStarted(long userId) { }
+
+        default void fired(long shooterId, long victimId, String shell, int damage) { }
+
+        /** revealedShell: 돋보기로 본 탄 (돋보기가 아니면 null). ejectedShell: 맥주로 뺀 탄 (아니면 ""). */
+        default void itemUsed(long userId, String item, String revealedShell, String ejectedShell) { }
+
+        /** GAME_OVER로 보낼 내용. 연승 모드는 여기서 기록을 저장하고 연승·경험치를 담는다. */
+        default Object gameOver(long winnerId, String reason) {
+            return new GameOverPacket(winnerId, reason, new PlayerResult[0], false);
+        }
     }
 
     /** ITEM_USED + 맥주로 뺀 탄 종류. 정식 규격(PacketSpec 5.5)에는 없는 개발용 필드. */

@@ -58,4 +58,10 @@ public class StreakService {
 
         return new StreakResult(streak, user.getBestStreak(), isNewBest, expGained);
     }
+
+    /** 이번 판 시작 전 현재 연승 (진행 중인 도전의 wins, 없으면 0). */
+    @Transactional(readOnly = true)
+    public int currentStreak(long userId) {
+        return runRepository.findByUserIdAndEndedAtIsNull(userId).map(StreakRun::getWins).orElse(0);
+    }
 }
