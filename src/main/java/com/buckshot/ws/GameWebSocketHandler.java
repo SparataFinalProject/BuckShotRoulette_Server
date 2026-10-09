@@ -1,6 +1,7 @@
 package com.buckshot.ws;
 
 import com.buckshot.ws.routing.MessageRouter;
+import com.buckshot.ws.session.ConnectionHeartbeat;
 import com.buckshot.ws.session.SessionRegistry;
 import com.buckshot.ws.session.UserDisconnectedEvent;
 import lombok.RequiredArgsConstructor;
@@ -8,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -36,12 +38,19 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             session.close(CloseCodes.DUPLICATE_CONNECTION);
             return;
         }
+        ConnectionHeartbeat.touch(session);
         log.info("connected userId={}", userId);
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        ConnectionHeartbeat.touch(session);
         messageRouter.route(new WsContext(userId(session)), message.getPayload());
+    }
+
+    @Override
+    protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+        ConnectionHeartbeat.touch(session);
     }
 
     @Override
