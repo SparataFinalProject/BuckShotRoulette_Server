@@ -6,9 +6,10 @@ import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.packet.c2s.GameReadyPacket;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+//import org.springframework.stereotype.Component;
 
 /** 개발용 임시 GAME_READY 처리 (DevMatchService 참고). 정식 GameReadyHandler가 생기면 지운다. */
-@Component
+//@Component
 @RequiredArgsConstructor
 public class DevGameReadyHandler implements PacketHandler<GameReadyPacket> {
 

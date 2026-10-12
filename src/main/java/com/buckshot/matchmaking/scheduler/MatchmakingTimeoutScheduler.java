@@ -41,4 +41,37 @@ public class MatchmakingTimeoutScheduler {
             );
         }
     }
+
+    @Scheduled(fixedDelay = 1000)
+    public void cancelReadyTimedOutMatches() {
+        List<MatchmakingService.ReadyTimeoutMatch> timedOutMatches =
+                matchmakingService.removeReadyTimedOutMatches(
+                        System.currentTimeMillis()
+                );
+
+        for (MatchmakingService.ReadyTimeoutMatch match : timedOutMatches) {
+            log.info(
+                    "match cancelled gameId={} playerA={} playerB={} reason=READY_TIMEOUT",
+                    match.gameId(),
+                    match.playerAId(),
+                    match.playerBId()
+            );
+
+            MatchCancelledPacket packet =
+                    new MatchCancelledPacket("READY_TIMEOUT");
+
+            // 양쪽 플레이어에게 준비 시간 초과 알림
+            packetSender.sendTo(
+                    match.playerAId(),
+                    PacketType.MATCH_CANCELLED,
+                    packet
+            );
+
+            packetSender.sendTo(
+                    match.playerBId(),
+                    PacketType.MATCH_CANCELLED,
+                    packet
+            );
+        }
+    }
 }

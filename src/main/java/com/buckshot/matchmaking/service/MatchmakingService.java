@@ -39,6 +39,12 @@ public class MatchmakingService {
     private final Map<String, Set<Long>> readyUsersByGame =
             new HashMap<>();
 
+
+    // gameId -> GAME_READY 마감 시각(epoch ms)
+    private final Map<String, Long> readyDeadlineByGame =
+            new HashMap<>();
+
+
     public synchronized JoinResult join(long userId) {
         if (waitingUsers.containsKey(userId) ||
                 matchedGameByUser.containsKey(userId)) {
@@ -86,6 +92,11 @@ public class MatchmakingService {
         readyUsersByGame.put(
                 gameId,
                 new HashSet<>()
+        );
+
+        readyDeadlineByGame.put(
+                gameId,
+                System.currentTimeMillis() + READY_TIMEOUT_SEC * 1000L
         );
 
         matchedGameByUser.put(
@@ -150,6 +161,65 @@ public class MatchmakingService {
         return timedOutUsers;
     }
 
+    public synchronized List<ReadyTimeoutMatch> removeReadyTimedOutMatches(
+            long now
+    ) {
+        List<ReadyTimeoutMatch> timedOutMatches = new ArrayList<>();
+
+        Iterator<Map.Entry<String, Long>> iterator =
+                readyDeadlineByGame.entrySet().iterator();
+
+        while (iterator.hasNext()) {
+            Map.Entry<String, Long> entry = iterator.next();
+
+            String gameId = entry.getKey();
+            long deadline = entry.getValue();
+
+            PendingMatch match = pendingMatches.get(gameId);
+
+            if (match == null) {
+                iterator.remove();
+                continue;
+            }
+
+            Set<Long> readyUsers = readyUsersByGame.get(gameId);
+
+            boolean allReady =
+                    readyUsers != null &&
+                            readyUsers.contains(match.playerAId()) &&
+                            readyUsers.contains(match.playerBId());
+
+            // 모두 준비된 매칭은 타임아웃 대상이 아니다.
+            if (allReady) {
+                iterator.remove();
+                continue;
+            }
+
+            // 아직 준비 시간이 남아 있다.
+            if (now < deadline) {
+                continue;
+            }
+
+            // 제한 시간 초과: 취소 결과를 기록
+            timedOutMatches.add(
+                    new ReadyTimeoutMatch(
+                            gameId,
+                            match.playerAId(),
+                            match.playerBId()
+                    )
+            );
+
+            // 동일한 synchronized 안에서 매칭 정보 정리
+            iterator.remove();
+            pendingMatches.remove(gameId);
+            readyUsersByGame.remove(gameId);
+            matchedGameByUser.remove(match.playerAId());
+            matchedGameByUser.remove(match.playerBId());
+        }
+
+        return timedOutMatches;
+    }
+
     public synchronized boolean removeFromQueue(long userId) {
         return waitingUsers.remove(userId) != null;
     }
@@ -184,6 +254,7 @@ public class MatchmakingService {
         matchedGameByUser.remove(match.playerAId());
         matchedGameByUser.remove(match.playerBId());
         readyUsersByGame.remove(gameId);
+        readyDeadlineByGame.remove(gameId);
 
         return new DisconnectedMatch(gameId, opponentUserId);
     }
@@ -231,6 +302,15 @@ public class MatchmakingService {
                         pendingMatch.playerBId() == userId;
 
         if (!isPlayer) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_STATE
+            );
+        }
+
+        Long deadline = readyDeadlineByGame.get(gameId);
+
+        if (deadline == null ||
+                System.currentTimeMillis() >= deadline) {
             throw new BusinessException(
                     ErrorCode.INVALID_STATE
             );
@@ -309,5 +389,12 @@ public class MatchmakingService {
         CANCELLED,
         ALREADY_MATCHED,
         NOT_QUEUED
+    }
+
+    public record ReadyTimeoutMatch(
+            String gameId,
+            long playerAId,
+            long playerBId
+    ) {
     }
 }
