@@ -60,7 +60,7 @@ public class DevGameRoom {
     private final PacketSender sender;
     private final Listener listener;
     private final long[] users;
-    private final Random random = new Random();
+    private final Random random;
 
     private final Deque<String> shells = new ArrayDeque<>();   // 앞이 약실
     private final Map<Long, Integer> hp = new HashMap<>();
@@ -86,7 +86,13 @@ public class DevGameRoom {
     }
 
     public DevGameRoom(PacketSender sender, long userA, long userB, Listener listener) {
+        this(sender, userA, userB, listener, new Random());
+    }
+
+    /** random: 선턴·장전 순서·아이템 뽑기. 테스트에서 고정 시드로 한 판을 재현할 때 넘긴다. */
+    DevGameRoom(PacketSender sender, long userA, long userB, Listener listener, Random random) {
         this.sender = sender;
+        this.random = random;
         this.listener = listener;
         this.users = new long[] { userA, userB };
         for (long id : users) {
@@ -344,6 +350,7 @@ public class DevGameRoom {
         round++;
         log.info("[dev] round {} shells(server only)={}", round, list);
         broadcast(PacketType.ROUND_START, new RoundStartPacket(round, live, blank));
+        listener.roundLoaded(firstTurnUser, List.copyOf(list));
         listener.roundStarted(live, blank);
         startTurn(firstTurnUser);
     }
@@ -391,7 +398,7 @@ public class DevGameRoom {
         turnUserId = userId;
         turnNumber++;
         broadcast(PacketType.TURN_START, new TurnStartPacket(userId, turnNumber, skipped, 0));
-        listener.turnStarted(userId);
+        listener.turnStarted(userId, turnNumber, skipped);
     }
 
     // ───────── 도우미 ─────────
@@ -427,11 +434,19 @@ public class DevGameRoom {
         /** 장전 직후 (실탄·공포탄 개수는 둘 다 아는 정보). */
         default void roundStarted(int live, int blank) { }
 
+        /** 장전 직후, 장전 순서 그대로 (앞이 약실). 타임라인 기록용이고 딜러 AI에는 넘기지 않는다. */
+        default void roundLoaded(long firstTurnUserId, List<String> shells) { }
+
         /** 아이템을 지급하고 배치를 기다리기 시작했다. */
         default void placingStarted() { }
 
-        /** 차례가 시작됐다 (수갑으로 건너뛴 사람이 아니라 실제로 행동할 사람). */
-        default void turnStarted(long userId) { }
+        /**
+         * 차례가 시작됐다 (수갑으로 건너뛴 사람이 아니라 실제로 행동할 사람).
+         *
+         * @param turnNumber    TURN_START.turnNumber (수갑으로 건너뛴 차례는 세지 않음)
+         * @param skippedUserId 이번에 수갑으로 차례를 건너뛴 사람 (없으면 0)
+         */
+        default void turnStarted(long userId, int turnNumber, long skippedUserId) { }
 
         default void fired(long shooterId, long victimId, String shell, int damage) { }
 

@@ -35,11 +35,13 @@ public record StreakRunDetail(RunSummary run, List<GameRow> games, Overall overa
         }
     }
 
-    public record GameRow(int gameIndex, GameResult result, int turns, int hpLeft, int damageTaken,
+    /** @param gameId 판 상세(GET /api/streak/games/{gameId})를 열 때 쓰는 id */
+    public record GameRow(long gameId, int gameIndex, GameResult result, int turns, int hpLeft, int damageTaken,
                           double accuracy, Map<Item, Integer> itemUsage, LocalDateTime endedAt) {
 
         public static GameRow of(StreakGame game) {
             return new GameRow(
+                    game.getId() == null ? 0 : game.getId(),
                     game.getGameIndex(), game.getResult(), game.getTurns(), game.getHpLeft(),
                     game.getDamageTaken(),
                     StatMath.percent(game.getCorrectShots(), game.getShots()),

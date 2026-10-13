@@ -75,7 +75,7 @@ class StreakServiceTest {
             return run;
         });
 
-        StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10));
+        StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10), null);
 
         assertEquals(new StreakResult(1, 1, true, 22), result);   // 1연승 10턴: 20 + 2
         assertEquals(22, user.getExp());
@@ -90,7 +90,7 @@ class StreakServiceTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(runRepository.findByUserIdAndEndedAtIsNull(1L)).thenReturn(Optional.of(run));
 
-        StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10));
+        StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10), null);
 
         assertEquals(3, result.streak());
         assertEquals(3, run.getWins());
@@ -105,7 +105,7 @@ class StreakServiceTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(runRepository.findByUserIdAndEndedAtIsNull(1L)).thenReturn(Optional.of(run));
 
-        StreakResult result = service.onGameEnd(1L, GameResult.LOSE, summary(10));
+        StreakResult result = service.onGameEnd(1L, GameResult.LOSE, summary(10), null);
 
         assertEquals(new StreakResult(0, 3, false, 5), result);   // 패배 10턴: 5
         assertEquals(5, user.getExp());
@@ -120,7 +120,7 @@ class StreakServiceTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(runRepository.findByUserIdAndEndedAtIsNull(1L)).thenReturn(Optional.of(run));
 
-        service.onGameEnd(1L, GameResult.LOSE, summary(10));
+        service.onGameEnd(1L, GameResult.LOSE, summary(10), null);
 
         ArgumentCaptor<StreakGame> captor = ArgumentCaptor.forClass(StreakGame.class);
         verify(gameRepository).save(captor.capture());
@@ -136,7 +136,7 @@ class StreakServiceTest {
         when(userRepository.findById(1L)).thenReturn(Optional.empty());
 
         BusinessException e = assertThrows(BusinessException.class,
-                () -> service.onGameEnd(1L, GameResult.WIN, summary(10)));
+                () -> service.onGameEnd(1L, GameResult.WIN, summary(10), null));
 
         assertEquals(ErrorCode.USER_NOT_FOUND, e.getErrorCode());
         verify(runRepository, never()).save(any());

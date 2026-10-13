@@ -53,7 +53,16 @@ public class StreakGame {
     @Column
     private LocalDateTime endedAt;
 
-    public StreakGame(long runId, int gameIndex, GameResult result, GameSummary summary, LocalDateTime endedAt){
+    /** 판별 타임라인 JSON (TimelineJson, 형식 버전은 JSON 안의 v). 지우지 않는다. 기능 전에 저장된 판은 null */
+    @Column(columnDefinition = "json")
+    private String timeline;
+
+    public StreakGame(long runId, int gameIndex, GameResult result, GameSummary summary, LocalDateTime endedAt) {
+        this(runId, gameIndex, result, summary, null, endedAt);
+    }
+
+    public StreakGame(long runId, int gameIndex, GameResult result, GameSummary summary, String timeline,
+                      LocalDateTime endedAt) {
         this.runId = runId;
         this.gameIndex = gameIndex;
         this.result = result;
@@ -63,6 +72,7 @@ public class StreakGame {
         this.damageTaken = summary.damageTaken();
         this.hpLeft = summary.hpLeft();
         this.itemUsage.putAll(summary.itemUsage());
+        this.timeline = timeline;
         this.endedAt = endedAt;
     }
 }

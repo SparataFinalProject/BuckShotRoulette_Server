@@ -12,6 +12,7 @@ import com.buckshot.streak.GameResult;
 import com.buckshot.streak.GameSummary;
 import com.buckshot.streak.StreakResult;
 import com.buckshot.streak.service.StreakService;
+import com.buckshot.streak.timeline.TimelineRecorder;
 import com.buckshot.ws.packet.ItemType;
 import com.buckshot.ws.packet.ShellType;
 import com.buckshot.ws.packet.Target;
@@ -19,6 +20,7 @@ import com.buckshot.ws.packet.dto.PlayerResult;
 import com.buckshot.ws.packet.s2c.RankedGameOverPacket;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
@@ -48,6 +50,7 @@ class DevStreakGame implements DevGameRoom.Listener {
 
     private final long userId;
     private final StreakService streakService;
+    private final Scheduler scheduler;
     private final DealerBrain brain = new HardDealerBrain();
     private final DealerMemory memory = new DealerMemory();
     private DevGameRoom room;
@@ -63,9 +66,23 @@ class DevStreakGame implements DevGameRoom.Listener {
     private int damageTaken;
     private final Map<Item, Integer> itemUsage = new EnumMap<>(Item.class);
 
+    // 판별 타임라인 (양쪽 행동, 딜러의 돋보기 결과 포함). 판이 끝나면 저장
+    private final TimelineRecorder timeline = new TimelineRecorder();
+
     DevStreakGame(long userId, StreakService streakService) {
+        this(userId, streakService, (task, delayMs) -> DEALER.schedule(task, delayMs, TimeUnit.MILLISECONDS));
+    }
+
+    /** scheduler: 딜러 행동을 예약하는 곳. 테스트는 예약된 일을 직접 꺼내 차례로 실행한다. */
+    DevStreakGame(long userId, StreakService streakService, Scheduler scheduler) {
         this.userId = userId;
         this.streakService = streakService;
+        this.scheduler = scheduler;
+    }
+
+    /** 딜러 행동 예약 (기본: dev-dealer 스레드에서 delayMs 뒤). */
+    interface Scheduler {
+        void schedule(Runnable task, long delayMs);
     }
 
     void attach(DevGameRoom room) {
@@ -75,17 +92,23 @@ class DevStreakGame implements DevGameRoom.Listener {
     // ───────── 방에서 오는 알림 (방 잠금 안) ─────────
 
     @Override
+    public void roundLoaded(long firstTurnUserId, List<String> shells) {
+        timeline.roundLoaded(firstTurnUserId == userId, shells);   // 기록만. 딜러 메모리에는 넣지 않는다
+    }
+
+    @Override
     public void roundStarted(int live, int blank) {
         memory.onLoaded(live, blank);
     }
 
     @Override
     public void placingStarted() {
-        DEALER.schedule(() -> room.placeAllFor(DEALER_ID), PLACE_DELAY_MS, TimeUnit.MILLISECONDS);
+        scheduler.schedule(() -> room.placeAllFor(DEALER_ID), PLACE_DELAY_MS);
     }
 
     @Override
-    public void turnStarted(long turnUserId) {
+    public void turnStarted(long turnUserId, int turnNumber, long skippedUserId) {
+        timeline.turnStarted(turnNumber, turnUserId == userId, skippedUserId != 0);
         if (turnUserId == userId) {
             turns++;
             return;
@@ -97,6 +120,7 @@ class DevStreakGame implements DevGameRoom.Listener {
     @Override
     public void fired(long shooterId, long victimId, String shell, int damage) {
         memory.onShellRemoved(Shell.valueOf(shell));
+        timeline.fired(victimId == shooterId, shell, damage);
         if (shooterId == userId) {
             shots++;
             boolean self = victimId == shooterId;
@@ -108,6 +132,7 @@ class DevStreakGame implements DevGameRoom.Listener {
     @Override
     public void itemUsed(long user, String item, String revealedShell, String ejectedShell) {
         if (ejectedShell != null && !ejectedShell.isEmpty()) memory.onShellRemoved(Shell.valueOf(ejectedShell));
+        timeline.itemUsed(item, revealedShell, ejectedShell);
         if (user == userId) {
             itemUsage.merge(Item.valueOf(item), 1, Integer::sum);
             return;
@@ -119,8 +144,9 @@ class DevStreakGame implements DevGameRoom.Listener {
     public Object gameOver(long winnerId, String reason) {
         GameResult result = winnerId == userId ? GameResult.WIN : GameResult.LOSE;
         GameSummary summary = new GameSummary(turns, shots, correctShots, damageTaken, room.hpOf(userId), new EnumMap<>(itemUsage));
+        timeline.ended(reason, winnerId == userId);
         try {
-            StreakResult r = streakService.onGameEnd(userId, result, summary);
+            StreakResult r = streakService.onGameEnd(userId, result, summary, timeline.build());
             log.info("[streak] game over userId={} result={} streak={} best={} exp+{}", userId, result, r.streak(), r.bestStreak(), r.expGained());
             return new RankedGameOverPacket(winnerId, reason, new PlayerResult[0], true,
                     MODE, r.streak(), r.bestStreak(), r.isNewBest(), r.expGained());
@@ -134,7 +160,7 @@ class DevStreakGame implements DevGameRoom.Listener {
 
     private void scheduleDealer() {
         int step = ++scheduledStep;
-        DEALER.schedule(() -> dealerStep(step), ACTION_DELAY_MS, TimeUnit.MILLISECONDS);
+        scheduler.schedule(() -> dealerStep(step), ACTION_DELAY_MS);
     }
 
     // 한 번에 행동 하나. 아이템을 써서 차례가 이어지면 다음 행동을 다시 예약한다

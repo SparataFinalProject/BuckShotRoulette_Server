@@ -10,6 +10,8 @@ import com.buckshot.streak.entity.StreakGame;
 import com.buckshot.streak.entity.StreakRun;
 import com.buckshot.streak.repository.StreakGameRepository;
 import com.buckshot.streak.repository.StreakRunRepository;
+import com.buckshot.streak.timeline.Timeline;
+import com.buckshot.streak.timeline.TimelineJson;
 import com.buckshot.user.entity.User;
 import com.buckshot.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,8 +30,13 @@ public class StreakService {
     private final StreakRunRepository runRepository;
     private final StreakGameRepository gameRepository;
 
+    /**
+     * 판이 끝났을 때 (GAME_OVER) 한 트랜잭션으로 판 기록(타임라인 포함)·연승·최고 기록·경험치를 저장한다.
+     *
+     * @param timeline 판별 타임라인. 없으면 null
+     */
     @Transactional
-    public StreakResult onGameEnd(long userId, GameResult result, GameSummary summary) {
+    public StreakResult onGameEnd(long userId, GameResult result, GameSummary summary, Timeline timeline) {
         LocalDateTime now = LocalDateTime.now();
 
         User user = userRepository.findById(userId)
@@ -40,7 +47,7 @@ public class StreakService {
 
         int gameIndex = run.getWins() + 1;
 
-        gameRepository.save(new StreakGame(run.getId(), gameIndex, result, summary, now));
+        gameRepository.save(new StreakGame(run.getId(), gameIndex, result, summary, TimelineJson.write(timeline), now));
 
         boolean isNewBest = false;
 

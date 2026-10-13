@@ -94,7 +94,7 @@ class StreakDetailServiceTest {
         StreakRun run = runWith(2);
         GameSummary summary = new GameSummary(10, 4, 3, 1, 4, Map.of(Item.SAW, 1));
         List<StreakGame> games = List.of(
-                new StreakGame(RUN_ID, 1, GameResult.WIN, summary, AT),
+                withId(new StreakGame(RUN_ID, 1, GameResult.WIN, summary, AT), 11L),
                 new StreakGame(RUN_ID, 2, GameResult.WIN, summary, AT),
                 new StreakGame(RUN_ID, 3, GameResult.LOSE, summary, AT));
         given(run, games, 1, 2, 1);
@@ -102,6 +102,7 @@ class StreakDetailServiceTest {
         List<StreakRunDetail.GameRow> rows = service.detail(RUN_ID).games();
 
         assertEquals(List.of(1, 2, 3), rows.stream().map(StreakRunDetail.GameRow::gameIndex).toList());
+        assertEquals(11L, rows.get(0).gameId());   // 판 상세를 열 때 쓰는 id
         assertEquals(GameResult.LOSE, rows.get(2).result());
         assertEquals(1, rows.get(0).itemUsage().get(Item.SAW));
         assertEquals(0, rows.get(0).itemUsage().get(Item.BEER));

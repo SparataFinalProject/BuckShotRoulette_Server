@@ -41,12 +41,12 @@ class DevStreakGameTest {
     @Test
     @DisplayName("사람의 턴·사격·맞는 판단·받은 피해·아이템을 모아 판이 끝나면 저장한다")
     void recordsHumanStatsAndSavesOnGameOver() {
-        when(streakService.onGameEnd(eq(USER), eq(GameResult.WIN), any()))
+        when(streakService.onGameEnd(eq(USER), eq(GameResult.WIN), any(), any()))
                 .thenReturn(new StreakResult(3, 5, false, 26));
 
-        game.turnStarted(USER);
-        game.turnStarted(DEALER);                              // 딜러 차례는 세지 않는다
-        game.turnStarted(USER);
+        game.turnStarted(USER, 1, 0);
+        game.turnStarted(DEALER, 2, 0);                              // 딜러 차례는 세지 않는다
+        game.turnStarted(USER, 3, 0);
         game.fired(USER, DEALER, ShellType.LIVE, 1);          // 상대 + 실탄: 맞음
         game.fired(USER, USER, ShellType.LIVE, 1);            // 나 + 실탄: 틀림, 피해 1
         game.fired(USER, USER, ShellType.BLANK, 0);           // 나 + 공포탄: 맞음
@@ -57,7 +57,7 @@ class DevStreakGameTest {
         RankedGameOverPacket packet = (RankedGameOverPacket) game.gameOver(USER, GameOverReason.HP_ZERO);
 
         ArgumentCaptor<GameSummary> captor = ArgumentCaptor.forClass(GameSummary.class);
-        verify(streakService).onGameEnd(eq(USER), eq(GameResult.WIN), captor.capture());
+        verify(streakService).onGameEnd(eq(USER), eq(GameResult.WIN), captor.capture(), any());
         GameSummary summary = captor.getValue();
         assertEquals(2, summary.turns());
         assertEquals(3, summary.shots());
@@ -77,7 +77,7 @@ class DevStreakGameTest {
     @Test
     @DisplayName("딜러가 이기면(또는 내가 나가면) LOSE로 저장한다")
     void dealerWinIsLose() {
-        when(streakService.onGameEnd(eq(USER), eq(GameResult.LOSE), any()))
+        when(streakService.onGameEnd(eq(USER), eq(GameResult.LOSE), any(), any()))
                 .thenReturn(new StreakResult(0, 5, false, 5));
 
         RankedGameOverPacket packet = (RankedGameOverPacket) game.gameOver(DEALER, GameOverReason.DISCONNECT);
@@ -89,7 +89,7 @@ class DevStreakGameTest {
     @Test
     @DisplayName("저장에 실패해도 GAME_OVER는 보낸다 (recorded false)")
     void recordFailureStillSendsGameOver() {
-        when(streakService.onGameEnd(eq(USER), any(), any())).thenThrow(new IllegalStateException("db down"));
+        when(streakService.onGameEnd(eq(USER), any(), any(), any())).thenThrow(new IllegalStateException("db down"));
 
         RankedGameOverPacket packet = (RankedGameOverPacket) game.gameOver(USER, GameOverReason.HP_ZERO);
 
