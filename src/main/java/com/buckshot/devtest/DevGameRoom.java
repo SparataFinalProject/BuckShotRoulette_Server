@@ -301,10 +301,18 @@ public class DevGameRoom {
         for (String s : items.get(userId)) if (s == null) free++;
         int n = Math.min(count, free);
 
+        // 원작처럼 담배는 한 사람이 동시에 GameRules.MAX_CIGARETTES_HELD개까지만: 이미 가진 것 + 이번에 뽑은 것이 다 차면 후보에서 뺀다
+        int cigarettes = 0;
+        for (String s : items.get(userId)) if (ItemType.CIGARETTE.equals(s)) cigarettes++;
+
         Deque<String> types = new ArrayDeque<>();
         ItemSlot[] granted = new ItemSlot[n];
         for (int i = 0; i < n; i++) {
-            String item = ITEM_POOL[random.nextInt(ITEM_POOL.length)];
+            String item;
+            do {
+                item = ITEM_POOL[random.nextInt(ITEM_POOL.length)];
+            } while (ItemType.CIGARETTE.equals(item) && cigarettes >= GameRules.MAX_CIGARETTES_HELD);
+            if (ItemType.CIGARETTE.equals(item)) cigarettes++;
             types.add(item);
             granted[i] = new ItemSlot(-1, item);
         }

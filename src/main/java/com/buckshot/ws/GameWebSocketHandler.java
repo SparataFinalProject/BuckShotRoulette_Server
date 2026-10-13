@@ -2,6 +2,7 @@ package com.buckshot.ws;
 
 import com.buckshot.matchmaking.service.MatchmakingService;
 import com.buckshot.ws.routing.MessageRouter;
+import com.buckshot.ws.session.ConnectionHeartbeat;
 import com.buckshot.ws.session.SessionRegistry;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.packet.s2c.MatchCancelledPacket;
@@ -11,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -41,14 +43,20 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             session.close(CloseCodes.DUPLICATE_CONNECTION);
             return;
         }
+        ConnectionHeartbeat.touch(session);
         log.info("connected userId={}", userId);
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        ConnectionHeartbeat.touch(session);
         messageRouter.route(new WsContext(userId(session)), message.getPayload());
     }
 
+    @Override
+    protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+        ConnectionHeartbeat.touch(session);
+    }
 
     @Override
     public void afterConnectionClosed(
@@ -113,7 +121,6 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         // 4. dev 브랜치의 연결 종료 이벤트 발행
         eventPublisher.publishEvent(new UserDisconnectedEvent(userId));
     }
-
 
     private static long userId(WebSocketSession session) {
         return (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);

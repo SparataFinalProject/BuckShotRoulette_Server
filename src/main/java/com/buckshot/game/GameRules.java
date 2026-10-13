@@ -9,6 +9,8 @@ public final class GameRules {
     /** 시작 hp이자 최대 hp (원작 기준 6). 담배로도 이 위로는 회복되지 않는다. */
     public static final int MAX_HP = 6;
     public static final int MAX_ITEM_SLOTS = 8;
+    /** 한 사람이 동시에 가질 수 있는 담배 수 (원작 amount_main). 다른 아이템은 칸 수만큼 가질 수 있다 */
+    public static final int MAX_CIGARETTES_HELD = 2;
 
     public static final int LIVE_DAMAGE = 1;
     public static final int SAW_MULTIPLIER = 2;
