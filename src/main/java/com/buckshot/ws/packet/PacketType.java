@@ -17,8 +17,9 @@ public final class PacketType {
     public static final String ROOM_JOIN = "ROOM_JOIN";                  // 개발용 방: 목록(roomId) 또는 방 코드(code)로 참가
     public static final String ROOM_LEAVE = "ROOM_LEAVE";                // 개발용 방: 방 떠나기
     public static final String ROOM_SET_FRIENDS_ONLY = "ROOM_SET_FRIENDS_ONLY";   // 개발용 방: 친구 전용(목록에서 숨김) 켜기/끄기, 방장만
+    public static final String ROOM_SET_FOUR_PLAYER = "ROOM_SET_FOUR_PLAYER";    // 개발용 방: 3~4인 전용 켜기/끄기, 방장만 (3명 이상이면 끌 수 없음)
     public static final String ROOM_KICK = "ROOM_KICK";                  // 개발용 방: 추방, 방장만
-    public static final String ROOM_START = "ROOM_START";                // 개발용 방: 게임 시작, 방장만 (2명일 때)
+    public static final String ROOM_START = "ROOM_START";                // 개발용 방: 게임 시작, 방장만 (기본 방은 2명일 때, 3~4인 전용 방은 3명 이상일 때)
     public static final String ROOM_LIST_WATCH = "ROOM_LIST_WATCH";      // 개발용 방: 방 목록 화면을 열고 닫음 (여는 동안 바뀔 때마다 ROOM_LIST)
 
     // S2C
@@ -41,6 +42,7 @@ public final class PacketType {
     public static final String ROOM_KICKED = "ROOM_KICKED";              // 개발용 방: 방장에게 추방당함
     public static final String ROOM_LEFT = "ROOM_LEFT";                  // 개발용 방: ROOM_LEAVE 처리 끝 (이후로는 그 방 상태를 보내지 않음)
     public static final String ROOM_JOIN_FAILED = "ROOM_JOIN_FAILED";    // 개발용 방: 참가 실패 (reason)
+    public static final String ROOM_START_MULTI = "ROOM_START_MULTI";    // 개발용 방: 3~4인 전용 방의 게임 시작 (참가자 모두에게, 매칭 없이 바로 멀티게임2 씬으로)
     public static final String ROOM_LIST = "ROOM_LIST";                  // 개발용 방: 목록에 보이는 방들
 
     private PacketType() {
