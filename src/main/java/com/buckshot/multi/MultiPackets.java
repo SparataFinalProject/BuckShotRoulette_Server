@@ -7,7 +7,14 @@ public final class MultiPackets {
     public record PlaceItem(int cell) {
     }
 
+    public record Chat(String text) {
+    }
+
     // S2C
+    /** seat가 채팅을 보냈다 (보낸 사람 자신에게도 온다) */
+    public record ChatMessage(int seat, String text) {
+    }
+
     /** 모두 씬에 들어오면 한 번 보낸다. itemCounts[seat] = 그 자리가 이번 라운드에 받을 아이템 개수 */
     public record RoundStart(int round, int health, int[] turnOrder, int[] itemCounts) {
     }

@@ -1,6 +1,7 @@
 package com.buckshot.multi;
 
 import com.buckshot.devtest.DevRoomPackets.Member;
+import com.buckshot.multi.MultiPackets.ChatMessage;
 import com.buckshot.multi.MultiPackets.ItemGrabbed;
 import com.buckshot.multi.MultiPackets.ItemPhaseBegin;
 import com.buckshot.multi.MultiPackets.ItemPhaseDone;
@@ -40,6 +41,8 @@ public class MultiGameService {
     static final int FIXED_ITEM_COUNT = 4;          // 이번 라운드 모두가 받을 개수 (0이면 원작 규칙의 무작위: 3인 3~5, 4인 3~4). 무작위여도 한 번만 정해 모두 같다
     static final int READY_TIMEOUT_SEC = 20;
     static final int INTRO_TIMEOUT_SEC = 40;
+    static final int CHAT_MAX_LENGTH = 100;         // 채팅 한 줄 최대 글자 수
+    static final long CHAT_MIN_INTERVAL_MS = 500;   // 도배 방지: 한 사람이 이 시간 안에 또 보낸 채팅은 버린다
 
     /** 원작 MP_ItemResource: 아이템 번호, 한 사람 상한, 테이블 전체 상한 (배분하지 않는 유통기한 약(7)은 뺐다) */
     private record ItemRule(int id, int perSeat, int global) {
@@ -67,6 +70,7 @@ public class MultiGameService {
         boolean ready;
         boolean introDone;
         boolean finished;                     // 아이템 받기 끝
+        long lastChatAt;                      // 마지막으로 채팅을 방송한 시각 (ms)
 
         Seat(long userId) {
             this.userId = userId;
@@ -81,12 +85,17 @@ public class MultiGameService {
     }
 
     private final Map<Long, Game> gameByUser = new HashMap<>();
+    // 채팅은 아이템 받기가 끝나 게임이 정리된 뒤에도 이어져야 해서 따로 둔다 (연결이 끊기거나 새 게임이 만들어질 때까지)
+    private final Map<Long, Game> chatGameByUser = new HashMap<>();
 
     public void create(List<Member> players) {
         Game game = new Game();
         for (Member m : players) game.seats.add(new Seat(m.userId()));
         synchronized (this) {
-            for (Seat s : game.seats) gameByUser.put(s.userId, game);
+            for (Seat s : game.seats) {
+                gameByUser.put(s.userId, game);
+                chatGameByUser.put(s.userId, game);
+            }
         }
         log.info("[multi] game created users={}", players.stream().map(Member::userId).toList());
         TIMER.schedule(() -> startRound(game), READY_TIMEOUT_SEC, TimeUnit.SECONDS);
@@ -135,8 +144,31 @@ public class MultiGameService {
         if (last) finish(game, seat, false);
     }
 
+    /** 같은 게임 참가자 모두에게 채팅을 보낸다. 닉네임은 클라이언트가 방 정보에서 자리 번호로 찾는다. */
+    public synchronized void chat(long userId, String text) {
+        Game game = chatGameByUser.get(userId);
+        if (game == null || text == null) return;
+        String clean = sanitizeChat(text);
+        if (clean.isEmpty()) return;
+        Seat seat = seat(game, userId);
+        long now = System.currentTimeMillis();
+        if (now - seat.lastChatAt < CHAT_MIN_INTERVAL_MS) return;
+        seat.lastChatAt = now;
+        for (Seat s : game.seats) {
+            if (chatGameByUser.get(s.userId) == game) packetSender.sendTo(s.userId, PacketType.MULTI_CHAT_MSG, new ChatMessage(indexOf(game, seat), clean));
+        }
+    }
+
+    /** 제어 문자를 빼고 앞뒤 공백을 자르고 최대 글자 수로 줄인다 */
+    static String sanitizeChat(String text) {
+        String clean = text.replaceAll("[\\p{Cntrl}\\p{Cf}]", "").strip();
+        if (clean.codePointCount(0, clean.length()) > CHAT_MAX_LENGTH) clean = clean.substring(0, clean.offsetByCodePoints(0, CHAT_MAX_LENGTH));
+        return clean;
+    }
+
     @EventListener
     public synchronized void onDisconnected(UserDisconnectedEvent event) {
+        chatGameByUser.remove(event.userId());
         Game game = gameByUser.remove(event.userId());
         if (game == null) return;
         Seat seat = seat(game, event.userId());

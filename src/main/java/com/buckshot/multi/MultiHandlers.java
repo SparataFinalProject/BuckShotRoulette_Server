@@ -32,6 +32,11 @@ public class MultiHandlers {
         return handler(PacketType.MULTI_PLACE_ITEM, MultiPackets.PlaceItem.class, (ctx, d) -> game.placeItem(ctx.userId(), d.cell()));
     }
 
+    @Bean
+    PacketHandler<MultiPackets.Chat> multiChatHandler(MultiGameService game) {
+        return handler(PacketType.MULTI_CHAT, MultiPackets.Chat.class, (ctx, d) -> game.chat(ctx.userId(), d.text()));
+    }
+
     private static <T> PacketHandler<T> handler(String type, Class<T> dataType, BiConsumer<WsContext, T> handle) {
         return new PacketHandler<>() {
             @Override

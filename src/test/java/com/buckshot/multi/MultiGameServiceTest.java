@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.buckshot.devtest.DevRoomPackets.Member;
+import com.buckshot.multi.MultiPackets.ChatMessage;
 import com.buckshot.multi.MultiPackets.ItemGrabbed;
 import com.buckshot.multi.MultiPackets.ItemPlaced;
 import com.buckshot.multi.MultiPackets.RoundStart;
@@ -101,5 +102,41 @@ class MultiGameServiceTest {
         verify(sender, atLeastOnce()).sendTo(eq(2L), eq(PacketType.MULTI_ITEM_PHASE_DONE), any());
         ItemPlaced lastPlaced = last(1, PacketType.MULTI_ITEM_PLACED, ItemPlaced.class);
         assertTrue(lastPlaced.last());
+    }
+
+    @Test
+    @DisplayName("채팅은 보낸 사람을 포함한 모두에게 보낸 자리 번호와 함께 간다")
+    void chatReachesEveryone() {
+        game.chat(2, "  안녕하세요  ");
+        for (long u = 1; u <= 3; u++) {
+            ChatMessage msg = last(u, PacketType.MULTI_CHAT_MSG, ChatMessage.class);
+            assertEquals(1, msg.seat());
+            assertEquals("안녕하세요", msg.text());
+        }
+    }
+
+    @Test
+    @DisplayName("빈 채팅은 버리고, 긴 채팅은 잘라 보내고, 연달아 보낸 채팅은 버린다")
+    void chatIsSanitizedAndRateLimited() {
+        game.chat(1, "   ");
+        game.chat(1, "a".repeat(MultiGameService.CHAT_MAX_LENGTH + 50));
+        game.chat(1, "너무 빨리");
+        ArgumentCaptor<Object> data = ArgumentCaptor.forClass(Object.class);
+        verify(sender, org.mockito.Mockito.times(1)).sendTo(eq(2L), eq(PacketType.MULTI_CHAT_MSG), data.capture());
+        assertEquals(MultiGameService.CHAT_MAX_LENGTH, ((ChatMessage) data.getValue()).text().length());
+    }
+
+    @Test
+    @DisplayName("아이템 받기가 끝나 게임이 정리된 뒤에도 채팅은 간다")
+    void chatWorksAfterItemPhaseOver() {
+        enterAll();
+        for (long u = 1; u <= 3; u++) {
+            for (int i = 0; i < MultiGameService.FIXED_ITEM_COUNT; i++) {
+                game.grabItem(u);
+                game.placeItem(u, i);
+            }
+        }
+        game.chat(3, "끝났다");
+        assertEquals("끝났다", last(1, PacketType.MULTI_CHAT_MSG, ChatMessage.class).text());
     }
 }
