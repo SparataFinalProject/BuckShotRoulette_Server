@@ -49,6 +49,13 @@ public class DevGameRoom {
     private static final int SLOT_COUNT = GameRules.MAX_ITEM_SLOTS;
     private static final String[] ITEM_POOL = {
             ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS };
+    // 새 아이템(원작 Double or Nothing)까지 넣은 후보. 1대1 개발 방(Listener.NONE)에서만 쓴다.
+    // 연승 모드처럼 Listener를 붙인 방은 딜러 판단·기록(game.Item)이 아직 새 아이템을 모르므로 원작 5종만 쓴다 (Listener.newItems)
+    private static final String[] ITEM_POOL_WITH_NEW = {
+            ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS,
+            ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE };
+    // 상한 약: 이 확률로 체력 +2(최대 체력까지), 아니면 -1 (원작 Double or Nothing)
+    private static final double MEDICINE_SUCCESS_CHANCE = 0.4;
     // 아이템을 다 놓을 때까지 기다리는 시간 (ITEMS_GRANTED를 보낸 때부터. 클라는 받기 전에 탄피 치우기·수갑 풀기·카메라 이동을 먼저 한다)
     private static final int PLACE_TIME_LIMIT_SEC = 25;
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -194,7 +201,7 @@ public class DevGameRoom {
         switch (item) {
             case ItemType.MAGNIFIER -> {
                 revealedShell = shells.peekFirst();
-                sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, revealedShell));
+                sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, revealedShell, 0));
             }
             case ItemType.CIGARETTE -> {
                 myHp = Math.min(HP, myHp + 1);
@@ -208,6 +215,25 @@ public class DevGameRoom {
                 handcuffTurns = 1;
             }
             case ItemType.BEER -> beerShell = shells.pollFirst();
+            case ItemType.INVERTER -> {
+                // 약실의 탄을 뒤집는다. 무엇으로 바뀌었는지는 아무에게도 알리지 않는다
+                String chambered = shells.pollFirst();
+                shells.addFirst(ShellType.LIVE.equals(chambered) ? ShellType.BLANK : ShellType.LIVE);
+            }
+            case ItemType.EXPIRED_MEDICINE -> {
+                myHp = random.nextDouble() < MEDICINE_SUCCESS_CHANCE ? Math.min(HP, myHp + 2) : myHp - 1;
+                hp.put(userId, myHp);
+            }
+            case ItemType.BURNER_PHONE -> {
+                // 약실 다음 탄부터 끝까지 중 무작위 하나 (쓴 사람에게만). 남은 탄이 1발이면 알려 줄 게 없다
+                if (shells.size() < 2) {
+                    sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, null, -1));
+                } else {
+                    int index = 1 + random.nextInt(shells.size() - 1);
+                    String shell = new ArrayList<>(shells).get(index);
+                    sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, shell, index));
+                }
+            }
             default -> { }
         }
 
@@ -216,6 +242,11 @@ public class DevGameRoom {
         log.info("[dev] item room={} user={} item={} slot={}", users[0] + "v" + users[1], userId, item, slot);
         listener.itemUsed(userId, item, revealedShell, beerShell);
 
+        if (myHp <= 0) {   // 상한 약으로 체력이 0이 됨
+            over = true;
+            broadcast(PacketType.GAME_OVER, listener.gameOver(other, GameOverReason.HP_ZERO));
+            return true;
+        }
         if (ItemType.BEER.equals(item) && shells.isEmpty()) startRound(userId);
         return true;
     }
@@ -357,6 +388,7 @@ public class DevGameRoom {
 
     // 종류만 정해 보낸다 (slot -1, 칸은 플레이어가 PLACE_ITEM으로 고름). 빈 칸보다 많으면 남는 아이템은 버림
     private void grant(long userId, int count) {
+        String[] pool = listener.newItems() ? ITEM_POOL_WITH_NEW : ITEM_POOL;
         int free = 0;
         for (String s : items.get(userId)) if (s == null) free++;
         int n = Math.min(count, free);
@@ -370,7 +402,7 @@ public class DevGameRoom {
         for (int i = 0; i < n; i++) {
             String item;
             do {
-                item = ITEM_POOL[random.nextInt(ITEM_POOL.length)];
+                item = pool[random.nextInt(pool.length)];
             } while (ItemType.CIGARETTE.equals(item) && cigarettes >= GameRules.MAX_CIGARETTES_HELD);
             if (ItemType.CIGARETTE.equals(item)) cigarettes++;
             types.add(item);
@@ -429,7 +461,13 @@ public class DevGameRoom {
      */
     public interface Listener {
 
-        Listener NONE = new Listener() { };
+        Listener NONE = new Listener() {
+            @Override
+            public boolean newItems() { return true; }
+        };
+
+        /** 새 아이템(인버터·상한 약·대포폰)도 지급할지. 기본은 원작 5종만 (연승 모드의 딜러 판단·기록이 새 아이템을 아직 모름) */
+        default boolean newItems() { return false; }
 
         /** 장전 직후 (실탄·공포탄 개수는 둘 다 아는 정보). */
         default void roundStarted(int live, int blank) { }
