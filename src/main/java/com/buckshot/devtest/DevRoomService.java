@@ -2,6 +2,7 @@ package com.buckshot.devtest;
 
 import com.buckshot.devtest.DevRoomPackets.JoinFailReason;
 import com.buckshot.devtest.DevRoomPackets.Member;
+import com.buckshot.multi.MultiGameService;
 import com.buckshot.user.service.UserService;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.PacketType;
@@ -26,7 +27,7 @@ import org.springframework.stereotype.Service;
  * 친구 전용 방은 목록에 안 보이고 방 코드로만 들어온다.
  * 방 목록 화면을 연 사람(ROOM_LIST_WATCH)에게는 목록이 바뀔 때마다 ROOM_LIST를 다시 보낸다.
  * 게임을 시작하면 방은 없어진다. 기본 방은 DevMatchService가 MATCH_FOUND부터 이어 가고,
- * 3~4인 전용 방은 아직 서버 게임이 없어 ROOM_START_MULTI(참가자 목록)만 보낸다. 정식 방 설계가 생기면 지운다.
+ * 3~4인 전용 방은 MultiGameService를 만들고 ROOM_START_MULTI(참가자 목록)를 보낸다. 정식 방 설계가 생기면 지운다.
  */
 @Slf4j
 @Service
@@ -41,6 +42,7 @@ public class DevRoomService {
     private final PacketSender packetSender;
     private final UserService userService;
     private final DevMatchService devMatchService;
+    private final MultiGameService multiGameService;
     private final SecureRandom random = new SecureRandom();
 
     private static final class Room {
@@ -168,7 +170,9 @@ public class DevRoomService {
             fourPlayer = room.fourPlayer;
             int size = room.members.size();
             if (fourPlayer ? size < MIN_MEMBERS_FOUR_PLAYER : size < MAX_MEMBERS) return;
-            players = List.copyOf(room.members);
+            var seated = new ArrayList<>(room.members);
+            if (fourPlayer) java.util.Collections.shuffle(seated, random);   // 원작처럼 자리를 섞는다 (순서가 자리 번호)
+            players = List.copyOf(seated);
             rooms.remove(room.id);
             for (Member m : players) {
                 roomByUser.remove(m.userId());
@@ -179,6 +183,7 @@ public class DevRoomService {
         }
         if (fourPlayer) {
             var start = new DevRoomPackets.StartMulti(players);
+            multiGameService.create(players);
             for (Member m : players) packetSender.sendTo(m.userId(), PacketType.ROOM_START_MULTI, start);
             return;
         }

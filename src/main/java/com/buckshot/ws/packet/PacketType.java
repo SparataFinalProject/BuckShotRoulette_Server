@@ -21,6 +21,11 @@ public final class PacketType {
     public static final String ROOM_SET_FOUR_PLAYER = "ROOM_SET_FOUR_PLAYER";    // 개발용 방: 3~4인 전용 켜기/끄기, 방장만 (3명 이상이면 끌 수 없음)
     public static final String ROOM_KICK = "ROOM_KICK";                  // 개발용 방: 추방, 방장만
     public static final String ROOM_START = "ROOM_START";                // 개발용 방: 게임 시작, 방장만 (기본 방은 2명일 때, 3~4인 전용 방은 3명 이상일 때)
+    public static final String MULTI_READY = "MULTI_READY";              // 3~4인 전용 게임: 씬에 들어왔다
+    public static final String MULTI_INTRO_DONE = "MULTI_INTRO_DONE";    // 3~4인 전용 게임: 입장 연출이 끝났다
+    public static final String MULTI_GRAB_ITEM = "MULTI_GRAB_ITEM";      // 3~4인 전용 게임: 상자에서 아이템을 꺼낸다
+    public static final String MULTI_CHAT = "MULTI_CHAT";                // 3~4인 전용 게임: 채팅 보내기 (text)
+    public static final String MULTI_PLACE_ITEM = "MULTI_PLACE_ITEM";    // 3~4인 전용 게임: 꺼낸 아이템을 놓을 칸 (cell)
     public static final String ROOM_LIST_WATCH = "ROOM_LIST_WATCH";      // 개발용 방: 방 목록 화면을 열고 닫음 (여는 동안 바뀔 때마다 ROOM_LIST)
 
     // S2C
@@ -44,7 +49,13 @@ public final class PacketType {
     public static final String ROOM_LEFT = "ROOM_LEFT";                  // 개발용 방: ROOM_LEAVE 처리 끝 (이후로는 그 방 상태를 보내지 않음)
     public static final String ROOM_JOIN_FAILED = "ROOM_JOIN_FAILED";    // 개발용 방: 참가 실패 (reason)
     public static final String ROOM_START_MULTI = "ROOM_START_MULTI";    // 개발용 방: 3~4인 전용 방의 게임 시작 (참가자 모두에게, 매칭 없이 바로 멀티게임2 씬으로)
-    public static final String ROOM_LIST = "ROOM_LIST";                  // 개발용 방: 목록에 보이는 방들
+    public static final String ROOM_LIST = "ROOM_LIST";
+    public static final String MULTI_ROUND_START = "MULTI_ROUND_START";            // 3~4인 전용 게임: 라운드, 목숨, 차례 순서, 자리별 받을 아이템 개수
+    public static final String MULTI_ITEM_PHASE_BEGIN = "MULTI_ITEM_PHASE_BEGIN";  // 3~4인 전용 게임: 모두 아이템 상자가 나온다
+    public static final String MULTI_ITEM_GRABBED = "MULTI_ITEM_GRABBED";          // 3~4인 전용 게임: 누가 상자에서 아이템을 꺼냈다
+    public static final String MULTI_ITEM_PLACED = "MULTI_ITEM_PLACED";            // 3~4인 전용 게임: 누가 아이템을 칸에 놓았다
+    public static final String MULTI_CHAT_MSG = "MULTI_CHAT_MSG";                  // 3~4인 전용 게임: 누가 채팅을 보냈다 (seat, text)
+    public static final String MULTI_ITEM_PHASE_DONE = "MULTI_ITEM_PHASE_DONE";    // 3~4인 전용 게임: 누구의 아이템 받기가 끝났다                  // 개발용 방: 목록에 보이는 방들
 
     private PacketType() {
     }
