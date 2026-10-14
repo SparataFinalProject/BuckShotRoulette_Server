@@ -22,9 +22,11 @@ import org.springframework.stereotype.Service;
 
 /**
  * 개발용 방: 멀티 로비의 방 만들기 / 방 목록 / 방 코드로 참가 / 추방 / 게임 시작.
- * 방은 최대 2명, 먼저 있던 사람이 방장(방장이 나가면 남은 사람이 방장). 친구 전용 방은 목록에 안 보이고 방 코드로만 들어온다.
+ * 방은 기본 최대 2명이고, 방장이 3~4인 전용을 켜면 최대 4명이다(3명 이상이 들어와 있으면 끌 수 없다). 먼저 있던 사람이 방장(방장이 나가면 남은 사람이 방장).
+ * 친구 전용 방은 목록에 안 보이고 방 코드로만 들어온다.
  * 방 목록 화면을 연 사람(ROOM_LIST_WATCH)에게는 목록이 바뀔 때마다 ROOM_LIST를 다시 보낸다.
- * 게임을 시작하면 방은 없어지고 DevMatchService가 MATCH_FOUND부터 이어 간다. 정식 방 설계가 생기면 지운다.
+ * 게임을 시작하면 방은 없어진다. 기본 방은 DevMatchService가 MATCH_FOUND부터 이어 가고,
+ * 3~4인 전용 방은 아직 서버 게임이 없어 ROOM_START_MULTI(참가자 목록)만 보낸다. 정식 방 설계가 생기면 지운다.
  */
 @Slf4j
 @Service
@@ -32,6 +34,8 @@ import org.springframework.stereotype.Service;
 public class DevRoomService {
 
     private static final int MAX_MEMBERS = 2;
+    private static final int MAX_MEMBERS_FOUR_PLAYER = 4;
+    private static final int MIN_MEMBERS_FOUR_PLAYER = 3;
     private static final int CODE_DIGITS = 6;
 
     private final PacketSender packetSender;
@@ -43,6 +47,7 @@ public class DevRoomService {
         final String id = UUID.randomUUID().toString();
         final String code;
         boolean friendsOnly;
+        boolean fourPlayer;   // 3~4인 전용
         final List<Member> members = new ArrayList<>();   // [0]이 방장
 
         Room(String code) {
@@ -51,6 +56,10 @@ public class DevRoomService {
 
         long hostId() {
             return members.get(0).userId();
+        }
+
+        int maxMembers() {
+            return fourPlayer ? MAX_MEMBERS_FOUR_PLAYER : MAX_MEMBERS;
         }
     }
 
@@ -88,7 +97,7 @@ public class DevRoomService {
                 if (!byCode) sendList(userId);   // 오래된 목록을 보고 눌렀으므로 바로 갱신
                 return;
             }
-            if (room.members.size() >= MAX_MEMBERS) {
+            if (room.members.size() >= room.maxMembers()) {
                 fail(userId, JoinFailReason.FULL);
                 return;
             }
@@ -123,6 +132,24 @@ public class DevRoomService {
         broadcastList();
     }
 
+    /** 3~4인 전용 켜기/끄기. 3명 이상이면 끌 수 없다 (되돌릴 수 없는 인원이므로 거절하고 현재 상태를 다시 보내 클라이언트의 대기를 풀어 준다) */
+    public synchronized void setFourPlayer(long userId, boolean fourPlayer) {
+        Room room = roomByUser.get(userId);
+        if (room == null || room.hostId() != userId) return;
+        if (room.fourPlayer == fourPlayer) {
+            sendState(room);
+            return;
+        }
+        if (!fourPlayer && room.members.size() > MAX_MEMBERS) {
+            sendState(room);
+            return;
+        }
+        room.fourPlayer = fourPlayer;
+        log.info("[dev] room fourPlayer code={} on={}", room.code, fourPlayer);
+        sendState(room);
+        broadcastList();
+    }
+
     public synchronized void kick(long userId, long targetId) {
         Room room = roomByUser.get(userId);
         if (room == null || room.hostId() != userId || targetId == userId || roomByUser.get(targetId) != room) return;
@@ -133,22 +160,29 @@ public class DevRoomService {
     }
 
     public void start(long userId) {
-        long host;
-        long guest;
+        List<Member> players;
+        boolean fourPlayer;
         synchronized (this) {
             Room room = roomByUser.get(userId);
-            if (room == null || room.hostId() != userId || room.members.size() < MAX_MEMBERS) return;
-            host = room.hostId();
-            guest = room.members.get(1).userId();
+            if (room == null || room.hostId() != userId) return;
+            fourPlayer = room.fourPlayer;
+            int size = room.members.size();
+            if (fourPlayer ? size < MIN_MEMBERS_FOUR_PLAYER : size < MAX_MEMBERS) return;
+            players = List.copyOf(room.members);
             rooms.remove(room.id);
-            roomByUser.remove(host);
-            roomByUser.remove(guest);
-            watchers.remove(host);
-            watchers.remove(guest);
-            log.info("[dev] room start code={} users={},{}", room.code, host, guest);
+            for (Member m : players) {
+                roomByUser.remove(m.userId());
+                watchers.remove(m.userId());
+            }
+            log.info("[dev] room start code={} fourPlayer={} users={}", room.code, fourPlayer, players.stream().map(Member::userId).toList());
             broadcastList();
         }
-        devMatchService.startPair(host, guest);
+        if (fourPlayer) {
+            var start = new DevRoomPackets.StartMulti(players);
+            for (Member m : players) packetSender.sendTo(m.userId(), PacketType.ROOM_START_MULTI, start);
+            return;
+        }
+        devMatchService.startPair(players.get(0).userId(), players.get(1).userId());
     }
 
     public synchronized void watch(long userId, boolean watch) {
@@ -183,7 +217,7 @@ public class DevRoomService {
     }
 
     private void sendState(Room room) {
-        var state = new DevRoomPackets.State(room.id, room.code, room.friendsOnly, room.hostId(), List.copyOf(room.members), MAX_MEMBERS);
+        var state = new DevRoomPackets.State(room.id, room.code, room.friendsOnly, room.hostId(), List.copyOf(room.members), room.maxMembers());
         for (Member m : room.members) packetSender.sendTo(m.userId(), PacketType.ROOM_STATE, state);
     }
 
@@ -203,7 +237,7 @@ public class DevRoomService {
     private DevRoomPackets.RoomList list() {
         var summaries = new ArrayList<DevRoomPackets.Summary>();
         for (Room r : rooms.values()) {
-            if (!r.friendsOnly) summaries.add(new DevRoomPackets.Summary(r.id, r.members.size(), MAX_MEMBERS));
+            if (!r.friendsOnly) summaries.add(new DevRoomPackets.Summary(r.id, r.members.size(), r.maxMembers()));
         }
         return new DevRoomPackets.RoomList(summaries);
     }

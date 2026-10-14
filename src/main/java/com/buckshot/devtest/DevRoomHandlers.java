@@ -33,6 +33,12 @@ public class DevRoomHandlers {
     }
 
     @Bean
+    PacketHandler<DevRoomPackets.SetFourPlayer> roomFourPlayerHandler(DevRoomService rooms) {
+        return handler(PacketType.ROOM_SET_FOUR_PLAYER, DevRoomPackets.SetFourPlayer.class,
+                (ctx, d) -> rooms.setFourPlayer(ctx.userId(), d.fourPlayer()));
+    }
+
+    @Bean
     PacketHandler<DevRoomPackets.Kick> roomKickHandler(DevRoomService rooms) {
         return handler(PacketType.ROOM_KICK, DevRoomPackets.Kick.class, (ctx, d) -> rooms.kick(ctx.userId(), d.userId()));
     }

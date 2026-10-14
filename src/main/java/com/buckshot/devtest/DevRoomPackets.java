@@ -16,6 +16,9 @@ public final class DevRoomPackets {
     public record SetFriendsOnly(boolean friendsOnly) {
     }
 
+    public record SetFourPlayer(boolean fourPlayer) {
+    }
+
     public record Kick(long userId) {
     }
 
@@ -28,6 +31,10 @@ public final class DevRoomPackets {
 
     /** members[0]이 방장 */
     public record State(String roomId, String code, boolean friendsOnly, long hostUserId, List<Member> members, int maxMembers) {
+    }
+
+    /** 3~4인 전용 방의 게임 시작. players[0]이 방장이고 순서가 자리 번호다 */
+    public record StartMulti(List<Member> players) {
     }
 
     public record Kicked() {
