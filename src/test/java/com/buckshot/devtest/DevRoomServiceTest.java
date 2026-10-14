@@ -32,7 +32,7 @@ class DevRoomServiceTest {
         match = mock(DevMatchService.class);
         UserService users = mock(UserService.class);
         when(users.getProfile(anyLong())).thenAnswer(i -> new PlayerProfileResponse(i.getArgument(0), "p" + i.getArgument(0), 0, 0, 1000, "BRONZE"));
-        rooms = new DevRoomService(sender, users, match);
+        rooms = new DevRoomService(sender, users, match, mock(com.buckshot.multi.MultiGameService.class));
     }
 
     private String code(long host) {

@@ -33,7 +33,7 @@ public final class DevRoomPackets {
     public record State(String roomId, String code, boolean friendsOnly, long hostUserId, List<Member> members, int maxMembers) {
     }
 
-    /** 3~4인 전용 방의 게임 시작. players[0]이 방장이고 순서가 자리 번호다 */
+    /** 3~4인 전용 방의 게임 시작. 자리는 서버가 섞어서 정하고 순서가 자리 번호다 (방장이 0번이 아닐 수 있다) */
     public record StartMulti(List<Member> players) {
     }
 
