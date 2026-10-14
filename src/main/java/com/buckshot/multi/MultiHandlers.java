@@ -37,6 +37,21 @@ public class MultiHandlers {
         return handler(PacketType.MULTI_CHAT, MultiPackets.Chat.class, (ctx, d) -> game.chat(ctx.userId(), d.text()));
     }
 
+    @Bean
+    PacketHandler<DevRoomPackets.Empty> multiPickupShotgunHandler(MultiGameService game) {
+        return handler(PacketType.MULTI_PICKUP_SHOTGUN, DevRoomPackets.Empty.class, (ctx, d) -> game.pickupShotgun(ctx.userId()));
+    }
+
+    @Bean
+    PacketHandler<MultiPackets.Look> multiLookHandler(MultiGameService game) {
+        return handler(PacketType.MULTI_LOOK, MultiPackets.Look.class, (ctx, d) -> game.look(ctx.userId(), d.direction()));
+    }
+
+    @Bean
+    PacketHandler<MultiPackets.Shoot> multiShootHandler(MultiGameService game) {
+        return handler(PacketType.MULTI_SHOOT, MultiPackets.Shoot.class, (ctx, d) -> game.shoot(ctx.userId(), d.target()));
+    }
+
     private static <T> PacketHandler<T> handler(String type, Class<T> dataType, BiConsumer<WsContext, T> handle) {
         return new PacketHandler<>() {
             @Override
