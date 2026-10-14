@@ -36,7 +36,8 @@ public class MultiGameService {
 
     static final int SLOTS = 8;
     static final int STARTING_HEALTH = 4;
-    static final int ITEM_TIMEOUT_SEC = 30;         // 원작 MAIN_timeout_duration_item_distribution
+    static final int ITEM_TIMEOUT_SEC = 12;         // 원작 MAIN_timeout_duration_item_distribution은 30초지만 테스트하기 쉽게 줄였다
+    static final int FIXED_ITEM_COUNT = 4;          // 이번 라운드 모두가 받을 개수 (0이면 원작 규칙의 무작위: 3인 3~5, 4인 3~4). 무작위여도 한 번만 정해 모두 같다
     static final int READY_TIMEOUT_SEC = 20;
     static final int INTRO_TIMEOUT_SEC = 40;
 
@@ -162,9 +163,10 @@ public class MultiGameService {
         int[] order = new int[n];
         for (int i = 0; i < n; i++) order[i] = i;
         int[] counts = new int[n];
+        int common = FIXED_ITEM_COUNT > 0 ? FIXED_ITEM_COUNT : randomItemCount(n);   // 원작처럼 라운드마다 한 번 정해 모든 자리가 같다
         for (int i = 0; i < n; i++) {
-            counts[i] = randomItemCount(n);
-            game.seats.get(i).target = counts[i];
+            counts[i] = common;
+            game.seats.get(i).target = common;
         }
         log.info("[multi] round start counts={}", java.util.Arrays.toString(counts));
         broadcast(game, PacketType.MULTI_ROUND_START, new RoundStart(0, STARTING_HEALTH, order, counts));

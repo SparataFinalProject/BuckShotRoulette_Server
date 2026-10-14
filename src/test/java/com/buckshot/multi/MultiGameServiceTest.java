@@ -46,7 +46,7 @@ class MultiGameServiceTest {
     }
 
     @Test
-    @DisplayName("모두 씬에 들어와야 라운드가 시작되고, 3인은 자리마다 3~5개를 받는다")
+    @DisplayName("모두 씬에 들어와야 라운드가 시작되고, 모든 자리가 같은 개수를 받는다")
     void roundStartsWhenAllReady() {
         game.ready(1);
         game.ready(2);
@@ -54,7 +54,7 @@ class MultiGameServiceTest {
         game.ready(3);
         RoundStart start = last(1, PacketType.MULTI_ROUND_START, RoundStart.class);
         assertEquals(3, start.itemCounts().length);
-        for (int n : start.itemCounts()) assertTrue(n >= 3 && n <= 5);
+        for (int n : start.itemCounts()) assertEquals(MultiGameService.FIXED_ITEM_COUNT, n);
     }
 
     @Test
