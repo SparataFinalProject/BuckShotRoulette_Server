@@ -7,6 +7,7 @@ import com.buckshot.ws.PacketHandler;
 import com.buckshot.ws.WsContext;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.packet.c2s.GameReadyPacket;
+import com.buckshot.devtest.DevMatchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,7 @@ public class GameReadyHandler
         implements PacketHandler<GameReadyPacket> {
 
     private final MatchmakingService matchmakingService;
+    private final DevMatchService devMatchService;
 
     @Override
     public String type() {
@@ -78,7 +80,14 @@ public class GameReadyHandler
                 result.playerBId()
         );
 
-        // 아직 여기서 GAME_START는 보내지 않는다.
-        // 실제 게임 상태 생성 파트와 연결 후 처리한다.
+        // 정식 매칭 결과로 기존 게임 진행 시스템 시작
+        devMatchService.startFromMatchmaking(
+                result.gameId(),
+                result.playerAId(),
+                result.playerBId()
+        );
+
+        // 게임 시작이 성공한 뒤 준비 단계의 매칭 정보 정리
+        matchmakingService.markGameStarted(result.gameId());
     }
 }

@@ -344,6 +344,46 @@ public class MatchmakingService {
         );
     }
 
+    /**
+     * GAME_START 이후 준비 단계의 매칭 정보 정리.
+     *
+     * matchedGameByUser는 게임 중 중복 매칭을 방지하기 위해
+     * 아직 유지한다.
+     */
+    public synchronized void markGameStarted(String gameId) {
+        pendingMatches.remove(gameId);
+        readyUsersByGame.remove(gameId);
+        readyDeadlineByGame.remove(gameId);
+    }
+
+
+    /**
+     * 게임 시작 이후 플레이어 연결이 종료되었을 때
+     * 해당 게임의 매칭 상태를 정리한다.
+     */
+    public synchronized void clearStartedMatchOnDisconnect(long userId) {
+
+        String gameId = matchedGameByUser.get(userId);
+
+        if (gameId == null) {
+            return;
+        }
+
+        // 아직 GAME_READY 대기 중인 매칭은
+        // 기존 removePendingMatchOnDisconnect()에서 처리한다.
+        if (pendingMatches.containsKey(gameId)) {
+            return;
+        }
+
+        // 같은 게임에 속한 두 플레이어의 매칭 상태 정리
+        matchedGameByUser.entrySet().removeIf(
+                entry -> gameId.equals(entry.getValue())
+        );
+
+        readyUsersByGame.remove(gameId);
+        readyDeadlineByGame.remove(gameId);
+    }
+
     public record JoinResult(
             long queuedAt,
             int timeoutSec,

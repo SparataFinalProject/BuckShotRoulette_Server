@@ -52,7 +52,8 @@ public class MatchJoinHandler
                 PacketType.MATCH_QUEUED,
                 new MatchQueuedPacket(
                         result.queuedAt(),
-                        result.timeoutSec()
+                        result.timeoutSec(),
+                        -1 // 임시: 상대 스킨 미지정
                 )
         );
 
@@ -84,7 +85,8 @@ public class MatchJoinHandler
                 new MatchFoundPacket(
                         match.gameId(),
                         playerB,
-                        match.readyTimeoutSec()
+                        match.readyTimeoutSec(),
+                        -1 // 임시
                 )
         );
 
@@ -94,7 +96,8 @@ public class MatchJoinHandler
                 new MatchFoundPacket(
                         match.gameId(),
                         playerA,
-                        match.readyTimeoutSec()
+                        match.readyTimeoutSec(),
+                        -1 // 임시
                 )
         );
 
