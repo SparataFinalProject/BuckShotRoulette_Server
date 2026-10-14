@@ -6,6 +6,7 @@ import com.buckshot.multi.MultiPackets.ItemGrabbed;
 import com.buckshot.multi.MultiPackets.ItemPhaseBegin;
 import com.buckshot.multi.MultiPackets.ItemPhaseDone;
 import com.buckshot.multi.MultiPackets.ItemPlaced;
+import com.buckshot.multi.MultiPackets.ItemUsed;
 import com.buckshot.multi.MultiPackets.LoadShotgun;
 import com.buckshot.multi.MultiPackets.LookAt;
 import com.buckshot.multi.MultiPackets.RoundEnd;
@@ -48,7 +49,7 @@ public class MultiGameService {
 
     static final int SLOTS = 8;
     static final int STARTING_HEALTH = 4;
-    static final int ITEM_TIMEOUT_SEC = 12;         // 원작 MAIN_timeout_duration_item_distribution은 30초지만 테스트하기 쉽게 줄였다
+    static final int ITEM_TIMEOUT_SEC = 22;         // 원작 MAIN_timeout_duration_item_distribution은 30초. 테스트용 (사용자 요청으로 12 -> 22, 나중에 줄인다)
     static final int FIXED_ITEM_COUNT = 4;          // 이번 라운드 모두가 받을 개수 (0이면 원작 규칙의 무작위: 3인 3~5, 4인 3~4). 무작위여도 한 번만 정해 모두 같다
     static final int LOAD_DELAY_SEC = 2;            // 모두 아이템 받기를 끝내고 장전이 시작하기까지 (원작 2초)
     static final int READY_TIMEOUT_SEC = 20;
@@ -63,22 +64,27 @@ public class MultiGameService {
 
     /** 원작 고정 시간 (초). 클라이언트 연출 길이와 맞춘 값이고, 테스트는 짧게 바꾼다 */
     record Timing(double loadToTurnSec, double turnStartSec, int turnTimeoutSec, int targetTimeoutSec, double shotSec, double dropSec,
-            double winSec, double nextRoundItemSec) {
+            double winSec, double nextRoundItemSec, double itemUseScale) {
         /**
          * loadToTurn: 장전 패킷 뒤 셸 순서를 보여 주고(0.7+5+1.7) 첫 차례로 카메라가 가기까지(0.2+0.9). turnStart: 차례 패킷 뒤 카메라가 도착하기까지.
          * turnTimeout 20, targetTimeout 21: 원작 MAIN_timeout_duration_turn / _shotgun_target_selection. shot 3.8: 쏘는 연출(1인칭 3.6+0.2, 3인칭 0.25+1.9+1.65).
          * drop: 총을 내려놓는 연출. win 9.3: 원작 WinRoutine(0.5+2+6.4+0.4). nextRoundItem: 새 라운드 표시·체력·번개를 다시 켜고 아이템 받기까지(추정)
+         * itemUseScale: ITEM_USE_SEC에 곱한다 (원작 1)
          */
-        static final Timing ORIGINAL = new Timing(8.5, 1.1, 20, 21, 3.8, 1.0, 9.3, 6.0);
+        static final Timing ORIGINAL = new Timing(8.5, 1.1, 30, 21, 3.8, 1.0, 9.3, 6.0, 1.0);
     }
 
     enum Phase {
-        ITEMS, LOADING, TURN, TARGETING, DROPPING, SHOOTING, ROUND_END
+        ITEMS, LOADING, TURN, ITEM_USE, TARGETING, DROPPING, SHOOTING, ROUND_END
     }
 
+    // 지금은 사용 연출이 있는 손톱(1), 돋보기(2), 담배(4), 맥주(5)만 나눠 준다. 나머지는 연출을 만들면 다시 넣는다:
+    // new ItemRule(3, 1, 1), new ItemRule(6, 8, 64), new ItemRule(8, 4, 64), new ItemRule(9, 4, 64), new ItemRule(10, 1, 2)
     private static final List<ItemRule> RULES = List.of(
-            new ItemRule(1, 2, 64), new ItemRule(2, 2, 64), new ItemRule(3, 1, 1), new ItemRule(4, 1, 64), new ItemRule(5, 8, 64),
-            new ItemRule(6, 8, 64), new ItemRule(8, 4, 64), new ItemRule(9, 4, 64), new ItemRule(10, 1, 2));
+            new ItemRule(1, 2, 64), new ItemRule(2, 2, 64), new ItemRule(4, 1, 64), new ItemRule(5, 8, 64));
+
+    /** 아이템 사용 연출 길이 (원작 1인칭: 테이블에서 집기 0.6 + "use item id N first person" + 끝 0.2). 인덱스는 아이템 번호 */
+    static final double[] ITEM_USE_SEC = {0, 0.6 + 2.87 + 0.2, 0.6 + 3.85 + 0.2, 0, 0.6 + 3.74 + 0.2, 0.6 + 3.84 + 0.2};
 
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "multi-game-timer");
@@ -128,6 +134,8 @@ public class MultiGameService {
         final ArrayDeque<Boolean> chamber = new ArrayDeque<>();   // 총 속에 남은 셸 (앞이 다음에 나온다). 서버만 안다
         int token;                                         // 단계가 바뀔 때마다 올려서 지난 단계의 타이머를 무시한다
         boolean checkingFirstDeath = true;                 // 이번 라운드에 아직 아무도 안 죽었다 (원작 MAIN_active_checking_for_first_death)
+        boolean sawedOff;                                  // 손톱으로 총열을 잘랐다: 다음 사격 피해 2 (원작 MAIN_barrel_sawed_off)
+        boolean turnExpiredDuringItem;                     // 아이템을 쓰는 동안 차례 제한 시간이 지났다 (쓰기가 끝나면 넘긴다)
         int firstDeadSeat = -1;                            // 지난 라운드에 처음 죽은 자리 (원작 MAIN_active_first_socket_to_die). 사격이 생기면 기록한다
     }
 
@@ -282,6 +290,7 @@ public class MultiGameService {
         game.itemPhase = false;
         game.loadScheduled = false;
         game.checkingFirstDeath = true;
+        game.sawedOff = false;
         game.chamber.clear();
         int n = game.seats.size();
         game.firstTurnSeat = pickFirstTurn(connected(game), game.firstDeadSeat, random);
@@ -404,6 +413,7 @@ public class MultiGameService {
         game.token++;
         game.turnSeat = seat;
         game.phase = Phase.TURN;
+        game.turnExpiredDuringItem = false;
         for (Seat s : game.seats) s.holdingShotgun = false;
         if (announce) broadcast(game, PacketType.MULTI_TURN, new Turn(seat, timing.turnTimeoutSec(), reason));
         later(game, timing.turnTimeoutSec() + (announce ? timing.turnStartSec() : 0), () -> onTurnTimeout(game, seat));
@@ -411,7 +421,13 @@ public class MultiGameService {
 
     /** 원작 timeout exceeded(turn): 총을 집지 않고 제한 시간이 지나면 다음 사람에게 넘어간다 */
     private void onTurnTimeout(Game game, int seat) {
-        if (game.phase != Phase.TURN || game.turnSeat != seat) return;
+        if (game.turnSeat != seat) return;
+        // 원작: 아이템을 쓰는 중에 시간이 다 되면 쓰기가 끝난 뒤 넘긴다
+        if (game.phase == Phase.ITEM_USE) {
+            game.turnExpiredDuringItem = true;
+            return;
+        }
+        if (game.phase != Phase.TURN) return;
         log.info("[multi] turn timeout seat={}", seat);
         beginTurn(game, nextTurn(seat, alive(game)), true, "timeout");
     }
@@ -466,9 +482,11 @@ public class MultiGameService {
         game.phase = Phase.SHOOTING;
         seat.holdingShotgun = false;
         boolean live = Boolean.TRUE.equals(game.chamber.pollFirst());
+        boolean sawed = game.sawedOff;
+        game.sawedOff = false;   // 원작 ShotgunBarrel_Grow: 쏘고 나면 총열이 다시 자란다
         Seat victim = game.seats.get(target);
         if (live) {
-            victim.health = Math.max(0, victim.health - 1);
+            victim.health = Math.max(0, victim.health - (sawed ? 2 : 1));
             if (victim.health == 0 && game.checkingFirstDeath) {
                 game.firstDeadSeat = target;
                 game.checkingFirstDeath = false;
@@ -479,8 +497,55 @@ public class MultiGameService {
         // 원작 CheckIfShooterEndingTurnAfterShot: 자기를 공포탄으로 쏜 경우만 차례가 그대로다 (셸이 비면 어쨌든 끝)
         boolean endsTurn = winnerSeat(game) != -1 || shellsLeft == 0 || !keepTurn;
         log.info("[multi] shot shooter={} target={} live={} left={} health={}", shooter, target, live, shellsLeft, java.util.Arrays.toString(healths(game)));
-        broadcast(game, PacketType.MULTI_SHOT, new Shot(shooter, target, live, shellsLeft, healths(game), endsTurn));
+        broadcast(game, PacketType.MULTI_SHOT, new Shot(shooter, target, live, shellsLeft, healths(game), endsTurn, sawed));
         later(game, timing.shotSec(), () -> afterShot(game, shooter, keepTurn, shellsLeft));
+    }
+
+    /**
+     * 원작 interact with item request(22) -> interact with item(23). 손톱(이미 잘렸으면 못 씀), 돋보기, 담배(라운드 시작 체력보다 낮을 때만 +1), 맥주.
+     * 쓰는 동안은 ITEM_USE 단계로 다른 행동을 받지 않고, 연출 시간(ITEM_USE_SEC) 뒤 차례가 이어진다.
+     */
+    public synchronized void useItem(long userId, int cell) {
+        Game game = gameByUser.get(userId);
+        if (game == null || game.over || game.phase != Phase.TURN) return;
+        Seat seat = seat(game, userId);
+        int idx = indexOf(game, seat);
+        if (idx != game.turnSeat || !seat.alive() || cell < 0 || cell >= SLOTS) return;
+        int itemId = seat.cells[cell];
+        if (itemId <= 0 || itemId >= ITEM_USE_SEC.length || ITEM_USE_SEC[itemId] <= 0) return;
+        if (itemId == 1 && game.sawedOff) return;
+        if ((itemId == 2 || itemId == 5) && game.chamber.isEmpty()) return;
+        seat.cells[cell] = 0;
+        game.phase = Phase.ITEM_USE;
+        int shell = -1;
+        switch (itemId) {
+            case 1 -> game.sawedOff = true;
+            case 2 -> shell = Boolean.TRUE.equals(game.chamber.peekFirst()) ? 1 : 0;
+            case 4 -> seat.health = Math.min(STARTING_HEALTH, seat.health + 1);
+            case 5 -> shell = Boolean.TRUE.equals(game.chamber.pollFirst()) ? 1 : 0;
+            default -> {
+            }
+        }
+        int shellsLeft = game.chamber.size();
+        int[] health = healths(game);
+        log.info("[multi] item used seat={} cell={} item={} shell={} left={}", idx, cell, itemId, shell, shellsLeft);
+        for (Seat s : game.seats) {
+            int seen = itemId == 2 && s != seat ? -1 : shell;   // 돋보기로 본 셸은 쓴 사람만 안다
+            packetSender.sendTo(s.userId, PacketType.MULTI_ITEM_USED, new ItemUsed(idx, cell, itemId, seen, shellsLeft, health, game.sawedOff));
+        }
+        later(game, ITEM_USE_SEC[itemId] * timing.itemUseScale(), () -> afterItem(game, idx));
+    }
+
+    /** 원작 EndItemInteraction: 맥주로 셸이 다 떨어졌으면 다음 사람부터 아이템 받기, 쓰는 동안 시간이 다 됐으면 넘기고, 아니면 차례가 이어진다 */
+    private void afterItem(Game game, int seat) {
+        if (game.phase != Phase.ITEM_USE || game.turnSeat != seat) return;
+        game.phase = Phase.TURN;
+        if (game.chamber.isEmpty()) {
+            game.firstTurnSeat = nextTurn(seat, alive(game));
+            regrabItems(game);
+            return;
+        }
+        if (game.turnExpiredDuringItem || !game.seats.get(seat).alive()) beginTurn(game, nextTurn(seat, alive(game)), true, "timeout");
     }
 
     /** 원작 CheckIfEndingTurn -> MainRoutine_UserEndTurn: 승자가 있으면 라운드 끝, 셸이 비면 아이템 받기, 아니면 다음 차례 */
@@ -512,6 +577,12 @@ public class MultiGameService {
     private void endGame(Game game) {
         game.over = true;
         for (Seat s : game.seats) gameByUser.remove(s.userId, game);
+    }
+
+    /** 테스트용: 자리 칸에 아이템을 놓아 둔다 */
+    synchronized void setItemForTest(long userId, int cell, int itemId) {
+        Game game = gameByUser.get(userId);
+        seat(game, userId).cells[cell] = itemId;
     }
 
     /** 테스트용: 총 속 셸을 정해 둔다 (true = 실탄) */

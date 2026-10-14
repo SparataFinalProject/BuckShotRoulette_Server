@@ -29,6 +29,7 @@ public final class PacketType {
     public static final String MULTI_PICKUP_SHOTGUN = "MULTI_PICKUP_SHOTGUN";   // 3~4인 전용 게임: 내 차례에 총을 집는다 (원작 pickup shotgun request)
     public static final String MULTI_LOOK = "MULTI_LOOK";                // 3~4인 전용 게임: 총을 들고 대상을 고르는 동안 마우스가 향한 쪽 (direction: left/forward/right)
     public static final String MULTI_SHOOT = "MULTI_SHOOT";              // 3~4인 전용 게임: 대상을 쏜다 (target 자리)
+    public static final String MULTI_USE_ITEM = "MULTI_USE_ITEM";        // 3~4인 전용 게임: 내 차례에 내 칸(cell)의 아이템을 쓴다
     public static final String ROOM_LIST_WATCH = "ROOM_LIST_WATCH";      // 개발용 방: 방 목록 화면을 열고 닫음 (여는 동안 바뀔 때마다 ROOM_LIST)
 
     // S2C
@@ -65,6 +66,7 @@ public final class PacketType {
     public static final String MULTI_LOOK_AT = "MULTI_LOOK_AT";                    // 3~4인 전용 게임: 총을 든 사람이 고르는 쪽을 본다 (보낸 사람 빼고)
     public static final String MULTI_SHOT = "MULTI_SHOT";                          // 3~4인 전용 게임: 누가 누구를 쐈다 (실탄 여부, 체력)
     public static final String MULTI_SHOTGUN_DROPPED = "MULTI_SHOTGUN_DROPPED";    // 3~4인 전용 게임: 대상 고르기 제한 시간이 지나 총을 내려놓았다
+    public static final String MULTI_ITEM_USED = "MULTI_ITEM_USED";                // 3~4인 전용 게임: 누가 아이템을 썼다 (돋보기로 본 셸은 쓴 사람에게만)
     public static final String MULTI_ROUND_END = "MULTI_ROUND_END";                // 3~4인 전용 게임: 한 명만 남아 라운드가 끝났다
 
     private PacketType() {

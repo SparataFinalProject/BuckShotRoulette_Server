@@ -47,7 +47,7 @@ class MultiTurnTest {
             return null;
         }).when(sender).sendTo(anyLong(), anyString(), any());
         game = new MultiGameService(sender);
-        game.timing = new MultiGameService.Timing(0.05, 0.02, 1, 1, 0.1, 0.05, 0.3, 0.1);
+        game.timing = new MultiGameService.Timing(0.05, 0.02, 1, 1, 0.1, 0.05, 0.3, 0.1, 0.02);
         game.create(List.of(new Member(1, "a"), new Member(2, "b"), new Member(3, "c")));
     }
 
@@ -216,6 +216,93 @@ class MultiTurnTest {
         game.shoot(user(first), -1);
         sleep(100);
         assertEquals(0, count(1, PacketType.MULTI_SHOT, Shot.class));
+    }
+
+    @Test
+    @DisplayName("아이템은 손톱·돋보기·담배·맥주만 나온다")
+    void onlyFourItems() {
+        for (long u = 1; u <= 3; u++) game.ready(u);
+        for (long u = 1; u <= 3; u++) game.introDone(u);
+        for (long u = 1; u <= 3; u++) {
+            for (int i = 0; i < MultiGameService.FIXED_ITEM_COUNT; i++) {
+                game.grabItem(u);
+                game.placeItem(u, i);
+            }
+        }
+        synchronized (sent) {
+            for (Sent s : sent) {
+                if (s.data instanceof MultiPackets.ItemGrabbed g) assertTrue(java.util.Set.of(1, 2, 4, 5).contains(g.itemId()), "나오면 안 되는 아이템 " + g.itemId());
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("손톱: 다음 실탄 피해 2, 이미 잘렸으면 또 못 쓰고, 쏘고 나면 원래대로")
+    void handsawDoublesDamage() {
+        int first = startTurns();
+        int target = (first + 1) % 3;
+        game.setItemForTest(user(first), 0, 1);
+        game.setItemForTest(user(first), 1, 1);
+        game.setChamberForTest(user(first), true, true);
+        game.useItem(user(first), 0);
+        MultiPackets.ItemUsed used = nth(PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, 0);
+        assertEquals(1, used.itemId());
+        assertTrue(used.sawed());
+        game.pickupShotgun(user(first));   // 쓰는 동안은 받지 않는다
+        sleep(30);
+        assertEquals(0, count(1, PacketType.MULTI_SHOTGUN_PICKED, ShotgunPicked.class));
+        sleep(150);   // 쓰기가 끝날 때까지 (짧게 줄인 시간)
+        game.useItem(user(first), 1);   // 이미 잘렸다
+        sleep(30);
+        assertEquals(1, count(1, PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class));
+        game.pickupShotgun(user(first));
+        game.shoot(user(first), target);
+        Shot shot = nth(PacketType.MULTI_SHOT, Shot.class, 0);
+        assertTrue(shot.live());
+        assertTrue(shot.sawed());
+        assertEquals(MultiGameService.STARTING_HEALTH - 2, shot.health()[target]);
+    }
+
+    @Test
+    @DisplayName("돋보기: 첫 셸은 쓴 사람만 알고, 맥주: 첫 셸을 빼서 모두에게 보여 준다")
+    void magnifierAndBeer() {
+        int first = startTurns();
+        int other = (first + 1) % 3;
+        game.setItemForTest(user(first), 0, 2);
+        game.setItemForTest(user(first), 1, 5);
+        game.setChamberForTest(user(first), true, false, true);
+        game.useItem(user(first), 0);
+        MultiPackets.ItemUsed mine = await(user(first), PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == 2);
+        MultiPackets.ItemUsed theirs = await(user(other), PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == 2);
+        assertEquals(1, mine.shell());
+        assertEquals(-1, theirs.shell());
+        assertEquals(3, mine.shellsLeft());
+        sleep(150);
+        game.useItem(user(first), 1);
+        MultiPackets.ItemUsed beer = await(user(other), PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == 5);
+        assertEquals(1, beer.shell());
+        assertEquals(2, beer.shellsLeft());
+    }
+
+    @Test
+    @DisplayName("담배: 라운드 시작 체력보다 낮을 때만 1 회복")
+    void cigarettesHeal() {
+        int first = startTurns();
+        game.setItemForTest(user(first), 0, 4);
+        game.useItem(user(first), 0);
+        MultiPackets.ItemUsed used = nth(PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, 0);
+        assertEquals(MultiGameService.STARTING_HEALTH, used.health()[first]);
+    }
+
+    @Test
+    @DisplayName("맥주로 마지막 셸을 빼면 다음 사람부터 아이템을 다시 받는다")
+    void beerLastShellRegrabs() {
+        int first = startTurns();
+        game.setItemForTest(user(first), 7, 5);
+        game.setChamberForTest(user(first), false);
+        game.useItem(user(first), 7);
+        assertEquals(0, nth(PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, 0).shellsLeft());
+        nth(PacketType.MULTI_ITEM_PHASE_BEGIN, ItemPhaseBegin.class, 1);
     }
 
     @Test
