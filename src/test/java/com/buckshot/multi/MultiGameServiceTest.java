@@ -130,6 +130,19 @@ class MultiGameServiceTest {
     }
 
     @Test
+    @DisplayName("1대1 게임 채팅은 두 사람에게만 가고, userId가 작은 쪽이 자리 0이다")
+    void oneOnOneChat() {
+        game.openChat(9, 7);
+        game.chat(9, "하이");
+        for (long u : new long[] { 7, 9 }) {
+            ChatMessage msg = last(u, PacketType.MULTI_CHAT_MSG, ChatMessage.class);
+            assertEquals(1, msg.seat());
+            assertEquals("하이", msg.text());
+        }
+        verify(sender, never()).sendTo(eq(1L), eq(PacketType.MULTI_CHAT_MSG), any());
+    }
+
+    @Test
     @DisplayName("아이템 받기가 끝나 게임이 정리된 뒤에도 채팅은 간다")
     void chatWorksAfterItemPhaseOver() {
         enterAll();

@@ -153,6 +153,15 @@ public class MultiGameService {
         if (last) finish(game, seat, false);
     }
 
+    /** 1대1 게임(DevMatchService)의 채팅만 연다. 자리 번호는 userId가 작은 쪽이 0이다 (클라이언트도 같은 규칙으로 찾는다). */
+    public synchronized void openChat(long a, long b) {
+        Game game = new Game();
+        game.over = true;
+        game.seats.add(new Seat(Math.min(a, b)));
+        game.seats.add(new Seat(Math.max(a, b)));
+        for (Seat s : game.seats) chatGameByUser.put(s.userId, game);
+    }
+
     /** 같은 게임 참가자 모두에게 채팅을 보낸다. 닉네임은 클라이언트가 방 정보에서 자리 번호로 찾는다. */
     public synchronized void chat(long userId, String text) {
         Game game = chatGameByUser.get(userId);

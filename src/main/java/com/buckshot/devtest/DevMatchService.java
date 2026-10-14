@@ -1,5 +1,6 @@
 package com.buckshot.devtest;
 
+import com.buckshot.multi.MultiGameService;
 import com.buckshot.streak.service.StreakService;
 import com.buckshot.user.dto.PlayerProfileResponse;
 import com.buckshot.user.service.UserService;
@@ -57,6 +58,7 @@ public class DevMatchService {
     private final UserService userService;
     private final SessionRegistry sessionRegistry;
     private final StreakService streakService;
+    private final MultiGameService multiGameService;   // 1대1 게임의 채팅
 
     private Long waitingUserId;
     private int waitingSkin;   // 기다리는 사람 화면에 미리 보여 준 상대 마스크 = 나중에 들어오는 사람의 마스크
@@ -114,6 +116,7 @@ public class DevMatchService {
             games.put(gameId, pair);
             ready.put(gameId, new HashSet<>());
         }
+        multiGameService.openChat(a, b);
         log.info("[dev] match found gameId={} users={},{}", gameId, pair[0], pair[1]);
         packetSender.sendTo(pair[0], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[1]), READY_TIMEOUT_SEC, skinB));
         packetSender.sendTo(pair[1], PacketType.MATCH_FOUND, new MatchFoundPacket(gameId, profile(pair[0]), READY_TIMEOUT_SEC, skinA));
