@@ -219,7 +219,7 @@ class MultiTurnTest {
     }
 
     @Test
-    @DisplayName("아이템은 손톱·돋보기·담배·맥주만 나온다")
+    @DisplayName("아이템은 쇠톱·돋보기·담배·맥주만 나온다")
     void onlyFourItems() {
         for (long u = 1; u <= 3; u++) game.ready(u);
         for (long u = 1; u <= 3; u++) game.introDone(u);
@@ -237,7 +237,7 @@ class MultiTurnTest {
     }
 
     @Test
-    @DisplayName("손톱: 다음 실탄 피해 2, 이미 잘렸으면 또 못 쓰고, 쏘고 나면 원래대로")
+    @DisplayName("쇠톱: 다음 실탄 피해 2, 이미 잘렸으면 또 못 쓰고, 쏘고 나면 원래대로")
     void handsawDoublesDamage() {
         int first = startTurns();
         int target = (first + 1) % 3;

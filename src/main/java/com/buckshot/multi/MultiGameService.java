@@ -78,7 +78,7 @@ public class MultiGameService {
         ITEMS, LOADING, TURN, ITEM_USE, TARGETING, DROPPING, SHOOTING, ROUND_END
     }
 
-    // 지금은 사용 연출이 있는 손톱(1), 돋보기(2), 담배(4), 맥주(5)만 나눠 준다. 나머지는 연출을 만들면 다시 넣는다:
+    // 지금은 사용 연출이 있는 쇠톱(1), 돋보기(2), 담배(4), 맥주(5)만 나눠 준다. 나머지는 연출을 만들면 다시 넣는다:
     // new ItemRule(3, 1, 1), new ItemRule(6, 8, 64), new ItemRule(8, 4, 64), new ItemRule(9, 4, 64), new ItemRule(10, 1, 2)
     private static final List<ItemRule> RULES = List.of(
             new ItemRule(1, 2, 64), new ItemRule(2, 2, 64), new ItemRule(4, 1, 64), new ItemRule(5, 8, 64));
@@ -134,7 +134,7 @@ public class MultiGameService {
         final ArrayDeque<Boolean> chamber = new ArrayDeque<>();   // 총 속에 남은 셸 (앞이 다음에 나온다). 서버만 안다
         int token;                                         // 단계가 바뀔 때마다 올려서 지난 단계의 타이머를 무시한다
         boolean checkingFirstDeath = true;                 // 이번 라운드에 아직 아무도 안 죽었다 (원작 MAIN_active_checking_for_first_death)
-        boolean sawedOff;                                  // 손톱으로 총열을 잘랐다: 다음 사격 피해 2 (원작 MAIN_barrel_sawed_off)
+        boolean sawedOff;                                  // 쇠톱으로 총열을 잘랐다: 다음 사격 피해 2 (원작 MAIN_barrel_sawed_off)
         boolean turnExpiredDuringItem;                     // 아이템을 쓰는 동안 차례 제한 시간이 지났다 (쓰기가 끝나면 넘긴다)
         int firstDeadSeat = -1;                            // 지난 라운드에 처음 죽은 자리 (원작 MAIN_active_first_socket_to_die). 사격이 생기면 기록한다
     }
@@ -502,7 +502,7 @@ public class MultiGameService {
     }
 
     /**
-     * 원작 interact with item request(22) -> interact with item(23). 손톱(이미 잘렸으면 못 씀), 돋보기, 담배(라운드 시작 체력보다 낮을 때만 +1), 맥주.
+     * 원작 interact with item request(22) -> interact with item(23). 쇠톱(이미 잘렸으면 못 씀), 돋보기, 담배(라운드 시작 체력보다 낮을 때만 +1), 맥주.
      * 쓰는 동안은 ITEM_USE 단계로 다른 행동을 받지 않고, 연출 시간(ITEM_USE_SEC) 뒤 차례가 이어진다.
      */
     public synchronized void useItem(long userId, int cell) {
