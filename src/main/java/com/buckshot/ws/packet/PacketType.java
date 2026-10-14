@@ -56,6 +56,7 @@ public final class PacketType {
     public static final String MULTI_ITEM_PLACED = "MULTI_ITEM_PLACED";            // 3~4인 전용 게임: 누가 아이템을 칸에 놓았다
     public static final String MULTI_CHAT_MSG = "MULTI_CHAT_MSG";                  // 3~4인 전용 게임: 누가 채팅을 보냈다 (seat, text)
     public static final String MULTI_ITEM_PHASE_DONE = "MULTI_ITEM_PHASE_DONE";    // 3~4인 전용 게임: 누구의 아이템 받기가 끝났다                  // 개발용 방: 목록에 보이는 방들
+    public static final String MULTI_LOAD_SHOTGUN = "MULTI_LOAD_SHOTGUN";          // 3~4인 전용 게임: 셸 장전 (보이는 셸 순서)
 
     private PacketType() {
     }

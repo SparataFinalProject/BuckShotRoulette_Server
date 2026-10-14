@@ -6,6 +6,7 @@ import com.buckshot.multi.MultiPackets.ItemGrabbed;
 import com.buckshot.multi.MultiPackets.ItemPhaseBegin;
 import com.buckshot.multi.MultiPackets.ItemPhaseDone;
 import com.buckshot.multi.MultiPackets.ItemPlaced;
+import com.buckshot.multi.MultiPackets.LoadShotgun;
 import com.buckshot.multi.MultiPackets.RoundStart;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.PacketType;
@@ -24,10 +25,10 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 /**
- * 3~4인 전용 게임 (원작 4인 모드 규칙을 따른 간단한 서버). 지금은 라운드 시작과 아이템 받기까지만 있다.
+ * 3~4인 전용 게임 (원작 4인 모드 규칙을 따른 간단한 서버). 지금은 라운드 시작, 아이템 받기, 셸 장전까지만 있다.
  * 흐름: 방 시작(DevRoomService) -> 모두 MULTI_READY(씬 입장) -> MULTI_ROUND_START(라운드, 목숨, 차례 순서, 자리별 받을 개수)
  *      -> 모두 MULTI_INTRO_DONE(입장 연출 끝) -> MULTI_ITEM_PHASE_BEGIN -> 각자 MULTI_GRAB_ITEM / MULTI_PLACE_ITEM(칸)을 반복
- *      -> 자리마다 MULTI_ITEM_PHASE_DONE. 서버가 아이템을 정하고 모든 자리에 같은 일을 알려 주므로 화면이 서로 같다.
+ *      -> 자리마다 MULTI_ITEM_PHASE_DONE -> 모두 끝나고 2초 뒤 MULTI_LOAD_SHOTGUN(보이는 셸 순서). 서버가 아이템을 정하고 모든 자리에 같은 일을 알려 주므로 화면이 서로 같다.
  * 사람이 안 오거나 느려도 멈추지 않게 각 단계에 제한 시간이 있다.
  */
 @Slf4j
@@ -39,6 +40,7 @@ public class MultiGameService {
     static final int STARTING_HEALTH = 4;
     static final int ITEM_TIMEOUT_SEC = 12;         // 원작 MAIN_timeout_duration_item_distribution은 30초지만 테스트하기 쉽게 줄였다
     static final int FIXED_ITEM_COUNT = 4;          // 이번 라운드 모두가 받을 개수 (0이면 원작 규칙의 무작위: 3인 3~5, 4인 3~4). 무작위여도 한 번만 정해 모두 같다
+    static final int LOAD_DELAY_SEC = 2;            // 모두 아이템 받기를 끝내고 장전이 시작하기까지 (원작 2초)
     static final int READY_TIMEOUT_SEC = 20;
     static final int INTRO_TIMEOUT_SEC = 40;
     static final int CHAT_MAX_LENGTH = 100;         // 채팅 한 줄 최대 글자 수
@@ -71,6 +73,7 @@ public class MultiGameService {
         boolean introDone;
         boolean finished;                     // 아이템 받기 끝
         long lastChatAt;                      // 마지막으로 채팅을 방송한 시각 (ms)
+        boolean left;                         // 연결이 끊겨 나갔다
 
         Seat(long userId) {
             this.userId = userId;
@@ -81,7 +84,12 @@ public class MultiGameService {
         final List<Seat> seats = new ArrayList<>();
         boolean started;       // MULTI_ROUND_START를 보냄
         boolean itemPhase;     // MULTI_ITEM_PHASE_BEGIN을 보냄
+        boolean loadScheduled; // 모두 아이템 받기를 끝내 장전을 예약함
         boolean over;
+        ShellDeck deck;                                    // 셸 묶음 뽑기 (게임 내내 이어진다)
+        boolean[] shotgun = new boolean[0];                // 총 속의 실제 셸 순서 (true = 실탄). 서버만 안다
+        int firstTurnSeat;                                 // 이번 라운드 선공 (원작 MAIN_active_first_turn_socket)
+        int firstDeadSeat = -1;                            // 지난 라운드에 처음 죽은 자리 (원작 MAIN_active_first_socket_to_die). 사격이 생기면 기록한다
     }
 
     private final Map<Long, Game> gameByUser = new HashMap<>();
@@ -91,6 +99,7 @@ public class MultiGameService {
     public void create(List<Member> players) {
         Game game = new Game();
         for (Member m : players) game.seats.add(new Seat(m.userId()));
+        game.deck = new ShellDeck(players.size(), random);
         synchronized (this) {
             for (Seat s : game.seats) {
                 gameByUser.put(s.userId, game);
@@ -174,6 +183,7 @@ public class MultiGameService {
         Seat seat = seat(game, event.userId());
         log.info("[multi] user left userId={}", event.userId());
         // 나간 사람을 기다리지 않는다
+        seat.left = true;
         seat.ready = true;
         seat.introDone = true;
         seat.finished = true;
@@ -192,6 +202,7 @@ public class MultiGameService {
         if (game.started || game.over) return;
         game.started = true;
         int n = game.seats.size();
+        game.firstTurnSeat = pickFirstTurn(connected(game), game.firstDeadSeat, random);
         int[] order = new int[n];
         for (int i = 0; i < n; i++) order[i] = i;
         int[] counts = new int[n];
@@ -227,12 +238,24 @@ public class MultiGameService {
     }
 
     private void checkItemPhaseOver(Game game) {
-        if (game.seats.stream().allMatch(s -> s.finished)) {
-            log.info("[multi] item phase over");
-            // 이 다음 단계(셸 장전, 차례)는 아직 없다
-            game.over = true;
-            for (Seat s : game.seats) gameByUser.remove(s.userId, game);
-        }
+        if (game.loadScheduled || !game.seats.stream().allMatch(s -> s.finished)) return;
+        log.info("[multi] item phase over");
+        game.loadScheduled = true;
+        TIMER.schedule(() -> loadShotgun(game), LOAD_DELAY_SEC, TimeUnit.SECONDS);
+    }
+
+    /** 원작 MainRoutine_LoadShotgun: 셸 순서와 선공을 모두에게 보낸다. 이 다음 단계(차례 진행)는 아직 없다 */
+    private synchronized void loadShotgun(Game game) {
+        if (game.over) return;
+        game.over = true;
+        for (Seat s : game.seats) gameByUser.remove(s.userId, game);
+        ShellDeck.Draw draw = game.deck.draw();
+        game.shotgun = draw.inGun();
+        // 원작 PassTurn: 선공이 그 사이 나갔으면 다음 자리로 넘긴다
+        boolean[] connected = connected(game);
+        int first = connected[game.firstTurnSeat] ? game.firstTurnSeat : nextTurn(game.firstTurnSeat, connected);
+        log.info("[multi] load shotgun visible={} firstTurn={}", java.util.Arrays.toString(draw.visible()), first);
+        broadcast(game, PacketType.MULTI_LOAD_SHOTGUN, new LoadShotgun(draw.visible(), first));
     }
 
     /** 원작 GetItemToGrab: 배분하는 아이템 중 그 사람의 개수와 테이블 전체 개수가 상한보다 적은 것에서 무작위 */
@@ -260,6 +283,31 @@ public class MultiGameService {
             case 4 -> 3 + random.nextInt(2);
             default -> 2 + random.nextInt(3);
         };
+    }
+
+    /** 원작 GetFirstTurn_Socket: 지난 라운드에 처음 죽은 사람이 아직 있으면 그 자리, 아니면 남아 있는 자리 중 무작위 */
+    static int pickFirstTurn(boolean[] connected, int firstDeadSeat, Random random) {
+        if (firstDeadSeat >= 0 && firstDeadSeat < connected.length && connected[firstDeadSeat]) return firstDeadSeat;
+        List<Integer> candidates = new ArrayList<>();
+        for (int i = 0; i < connected.length; i++) if (connected[i]) candidates.add(i);
+        if (candidates.isEmpty()) return 0;
+        return candidates.get(random.nextInt(candidates.size()));
+    }
+
+    /** 원작 GetNextTurn_Socket (CW): 자리 번호가 하나 큰 쪽으로, 끝이면 0부터. 나간 자리는 건너뛴다 */
+    static int nextTurn(int from, boolean[] connected) {
+        int n = connected.length;
+        for (int step = 1; step <= n; step++) {
+            int seat = (from + step) % n;
+            if (connected[seat]) return seat;
+        }
+        return from;
+    }
+
+    private static boolean[] connected(Game game) {
+        boolean[] connected = new boolean[game.seats.size()];
+        for (int i = 0; i < connected.length; i++) connected[i] = !game.seats.get(i).left;
+        return connected;
     }
 
     private void broadcast(Game game, String type, Object data) {

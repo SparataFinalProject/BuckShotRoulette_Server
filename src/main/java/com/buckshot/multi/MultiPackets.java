@@ -35,6 +35,13 @@ public final class MultiPackets {
     public record ItemPhaseDone(int seat, boolean timedOut) {
     }
 
+    /**
+     * 모두 아이템 받기를 끝내고 2초 뒤에 보낸다 (원작 load shotgun routine). sequence는 장치에 보이는 셸 순서로 true = 실탄이고,
+     * 원작처럼 실탄이 앞, 공포탄이 뒤다. 총 속의 실제 순서는 서버만 안다. firstTurnSeat는 장전 뒤 총이 향할 선공 자리.
+     */
+    public record LoadShotgun(boolean[] sequence, int firstTurnSeat) {
+    }
+
     private MultiPackets() {
     }
 }
