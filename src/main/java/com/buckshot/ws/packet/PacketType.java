@@ -70,6 +70,7 @@ public final class PacketType {
     public static final String MULTI_ITEM_USED = "MULTI_ITEM_USED";                // 3~4인 전용 게임: 누가 아이템을 썼다 (돋보기로 본 셸은 쓴 사람에게만)
     public static final String MULTI_ITEM_SECONDARY_DONE = "MULTI_ITEM_SECONDARY_DONE";   // 3~4인 전용 게임: 재머 결과(대상 또는 제한 시간), 아드레날린 제한 시간
     public static final String MULTI_ROUND_END = "MULTI_ROUND_END";                // 3~4인 전용 게임: 한 명만 남아 라운드가 끝났다
+    public static final String MULTI_PLAYER_LEFT = "MULTI_PLAYER_LEFT";            // 3~4인 전용 게임: 누가 연결이 끊겨 나갔다 (자리는 비고 체력 0). 이어서 차례 넘김, 라운드 끝 등이 온다
 
     private PacketType() {
     }

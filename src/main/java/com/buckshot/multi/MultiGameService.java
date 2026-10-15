@@ -10,6 +10,7 @@ import com.buckshot.multi.MultiPackets.ItemSecondaryDone;
 import com.buckshot.multi.MultiPackets.ItemUsed;
 import com.buckshot.multi.MultiPackets.LoadShotgun;
 import com.buckshot.multi.MultiPackets.LookAt;
+import com.buckshot.multi.MultiPackets.PlayerLeft;
 import com.buckshot.multi.MultiPackets.RoundEnd;
 import com.buckshot.multi.MultiPackets.RoundStart;
 import com.buckshot.multi.MultiPackets.Shot;
@@ -65,14 +66,15 @@ public class MultiGameService {
 
     /** 원작 고정 시간 (초). 클라이언트 연출 길이와 맞춘 값이고, 테스트는 짧게 바꾼다 */
     record Timing(double loadToTurnSec, double turnStartSec, int turnTimeoutSec, int targetTimeoutSec, double shotSec, double dropSec,
-            double winSec, double nextRoundItemSec, double itemUseScale) {
+            double winSec, double nextRoundItemSec, double itemUseScale, double removerSec) {
         /**
          * loadToTurn: 장전 패킷 뒤 셸 순서를 보여 주고(0.7+5+1.7) 첫 차례로 카메라가 가기까지(0.2+0.9). turnStart: 차례 패킷 뒤 카메라가 도착하기까지.
          * turnTimeout 20, targetTimeout 21: 원작 MAIN_timeout_duration_turn / _shotgun_target_selection. shot 3.8: 쏘는 연출(1인칭 3.6+0.2, 3인칭 0.25+1.9+1.65).
          * drop: 총을 내려놓는 연출. win 9.3: 원작 WinRoutine(0.5+2+6.4+0.4). nextRoundItem: 새 라운드 표시·체력·번개를 다시 켜고 아이템 받기까지(추정)
          * itemUseScale: ITEM_USE_SEC와 재머·아드레날린 고르기 시간에 곱한다 (원작 1)
+         * remover 3.5: 지난 라운드 아이템이 남아 있으면 원작 ClearUserInventories(아이템 수거기)가 끝나기를 기다리는 시간
          */
-        static final Timing ORIGINAL = new Timing(8.5, 1.1, 30, 21, 3.8, 1.0, 9.3, 6.0, 1.0);
+        static final Timing ORIGINAL = new Timing(8.5, 1.1, 30, 21, 3.8, 1.0, 9.3, 6.0, 1.0, 3.5);
     }
 
     enum Phase {
@@ -273,16 +275,25 @@ public class MultiGameService {
             game.over = true;
             return;
         }
-        seat.holdingShotgun = false;
+        // 원작 RemoveInstancesFromGame: 남은 사람들에게 알리고 그 자리는 체력 0으로 빠진다 (아이템은 테이블에 남는다)
+        int idx = indexOf(game, seat);
+        seat.health = 0;
+        seat.jammed = false;
+        broadcast(game, PacketType.MULTI_PLAYER_LEFT, new PlayerLeft(idx));
+        boolean holdingGun = seat.holdingShotgun;
         if (!game.started && game.seats.stream().allMatch(s -> s.ready)) startRound(game);
         else if (game.started && !game.itemPhase && game.phase == Phase.ITEMS && game.seats.stream().allMatch(s -> s.introDone)) beginItemPhase(game);
         else if (game.phase == Phase.ITEMS && game.itemPhase) checkItemPhaseOver(game);
         else if (game.phase == Phase.TURN || game.phase == Phase.TARGETING) {
-            // 차례였던 사람이 나갔으면 넘기고, 한 명만 남았으면 라운드를 끝낸다
+            // 한 명만 남았으면 라운드를 끝낸다. 차례였던 사람이 나갔으면 (총을 들고 있었으면 내려놓고) 넘긴다
             int winner = winnerSeat(game);
             if (winner != -1) roundEnd(game, winner);
-            else if (indexOf(game, seat) == game.turnSeat) beginTurn(game, nextTurn(game.turnSeat, alive(game), game.turnCw), true, "timeout");
+            else if (idx == game.turnSeat) {
+                if (holdingGun) onTargetTimeout(game, idx);
+                else beginTurn(game, nextTurn(game.turnSeat, alive(game), game.turnCw), true, "timeout");
+            }
         }
+        seat.holdingShotgun = false;
     }
 
     // ───── 단계 ─────
@@ -324,6 +335,8 @@ public class MultiGameService {
         int[] order = new int[n];
         int[] counts = new int[n];
         int common = FIXED_ITEM_COUNT > 0 ? FIXED_ITEM_COUNT : randomItemCount(n);
+        boolean itemsLeft = false;   // 원작 GetSocketInventoriesToClear: 아이템이 남은 자리가 있으면 수거기가 걷어 간다
+        for (Seat s : game.seats) for (int c : s.cells) if (c != 0) itemsLeft = true;
         for (int i = 0; i < n; i++) {
             Seat s = game.seats.get(i);
             order[i] = i;
@@ -338,9 +351,9 @@ public class MultiGameService {
             s.target = s.left ? 0 : common;
             counts[i] = s.target;
         }
-        log.info("[multi] round {} start counts={}", game.round, java.util.Arrays.toString(counts));
+        log.info("[multi] round {} start counts={} itemsLeft={}", game.round, java.util.Arrays.toString(counts), itemsLeft);
         broadcast(game, PacketType.MULTI_ROUND_START, new RoundStart(game.round, STARTING_HEALTH, order, counts));
-        later(game, timing.nextRoundItemSec(), () -> beginItemPhase(game));
+        later(game, timing.nextRoundItemSec() + (itemsLeft ? timing.removerSec() : 0), () -> beginItemPhase(game));
     }
 
     private synchronized void beginItemPhase(Game game) {
@@ -679,6 +692,7 @@ public class MultiGameService {
     /** 아드레날린으로 훔칠 수 있는 아이템: 다른 사람 칸에 있고 아드레날린이 아니며 지금 쓸 수 있는 것 */
     private static boolean stealable(Game game, int user, int seat, int cell) {
         if (seat == user || seat < 0 || seat >= game.seats.size()) return false;
+        if (game.seats.get(seat).left) return false;   // 나간 사람의 아이템은 테이블에 남을 뿐 훔칠 수 없다 (원작은 전역 부모로 옮긴다)
         return itemUsable(game, user, game.seats.get(seat).cells[cell], true);
     }
 

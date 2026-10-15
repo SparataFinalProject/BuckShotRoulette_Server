@@ -47,7 +47,7 @@ class MultiTurnTest {
             return null;
         }).when(sender).sendTo(anyLong(), anyString(), any());
         game = new MultiGameService(sender);
-        game.timing = new MultiGameService.Timing(0.05, 0.02, 1, 1, 0.1, 0.05, 0.3, 0.1, 0.02);
+        game.timing = new MultiGameService.Timing(0.05, 0.02, 1, 1, 0.1, 0.05, 0.3, 0.1, 0.02, 0.05);
         game.create(List.of(new Member(1, "a"), new Member(2, "b"), new Member(3, "c")));
     }
 

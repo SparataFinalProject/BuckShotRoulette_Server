@@ -105,6 +105,13 @@ public final class MultiPackets {
     public record RoundEnd(int winnerSeat, int round, boolean finalRound) {
     }
 
+    /**
+     * seat의 사람이 연결이 끊겨 나갔다 (남은 사람들에게만 간다). 그 자리는 체력 0으로 빠지고 아이템은 테이블에 남는다.
+     * 총을 들고 있었으면 이어서 ShotgunDropped가, 차례였으면 Turn이, 한 명만 남았으면 RoundEnd가 온다.
+     */
+    public record PlayerLeft(int seat) {
+    }
+
     private MultiPackets() {
     }
 }
