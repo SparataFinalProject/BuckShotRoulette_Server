@@ -10,6 +10,7 @@ import com.buckshot.multi.MultiPackets.ItemSecondaryDone;
 import com.buckshot.multi.MultiPackets.ItemUsed;
 import com.buckshot.multi.MultiPackets.LoadShotgun;
 import com.buckshot.multi.MultiPackets.LookAt;
+import com.buckshot.multi.MultiPackets.MatchResults;
 import com.buckshot.multi.MultiPackets.PlayerLeft;
 import com.buckshot.multi.MultiPackets.RoundEnd;
 import com.buckshot.multi.MultiPackets.RoundStart;
@@ -57,6 +58,7 @@ public class MultiGameService {
     static final int READY_TIMEOUT_SEC = 20;
     static final int INTRO_TIMEOUT_SEC = 40;
     static final int ROUNDS = 3;                    // 원작 라운드 수 (0~2)
+    static final int[] ROUND_CASH = {70000, 75000, 80000};   // 원작 WinRoutine: 라운드 0~2 승자 상금 (결과 화면 "최고 자산가")
     static final int CHAT_MAX_LENGTH = 100;         // 채팅 한 줄 최대 글자 수
     static final long CHAT_MIN_INTERVAL_MS = 500;   // 도배 방지: 한 사람이 이 시간 안에 또 보낸 채팅은 버린다
 
@@ -134,6 +136,13 @@ public class MultiGameService {
         boolean holdingShotgun;               // 총을 집었다 (대상을 고르는 중)
         boolean jammed;                       // 재머에 걸렸다 (원작 is_jammed)
         boolean jamChecked;                   // 걸린 뒤 차례를 한 번 넘겼다 (원작 jammer_checked). 다음 차례에 풀린다
+        // 게임 끝 결과 화면 통계 (원작 MP_UserInstanceProperties stat_*). 게임 내내 쌓인다
+        int damageDealt;                      // 실탄으로 쏜 피해 (자기 자신 포함, 원작 stat_damage_dealt)
+        int deaths;                           // 실탄에 맞은 횟수 (원작 stat_number_of_deaths)
+        int cigarettes;                       // 담배를 피운 횟수
+        int shotSelfLive;                     // 자기를 실탄으로 쏜 횟수
+        int itemsUsed;                        // 쓴 아이템 수 (훔쳐 쓴 것 포함)
+        int cash;                             // 라운드 승리 상금 합계
 
         Seat(long userId) {
             this.userId = userId;
@@ -545,6 +554,10 @@ public class MultiGameService {
         game.sawedOff = false;   // 원작 ShotgunBarrel_Grow: 쏘고 나면 총열이 다시 자란다
         Seat victim = game.seats.get(target);
         if (live) {
+            // 원작 ShootingOutcome / DeathRequest의 통계
+            seat.damageDealt += sawed ? 2 : 1;
+            victim.deaths++;
+            if (target == shooter) seat.shotSelfLive++;
             victim.health = Math.max(0, victim.health - (sawed ? 2 : 1));
             if (victim.health == 0 && game.checkingFirstDeath) {
                 game.firstDeadSeat = target;
@@ -584,6 +597,8 @@ public class MultiGameService {
      */
     private void applyItem(Game game, int idx, int fromSeat, int cell, int itemId, boolean stolen) {
         Seat seat = game.seats.get(idx);
+        seat.itemsUsed++;                     // 원작 ChangeGameStateWithItem
+        if (itemId == 4) seat.cigarettes++;
         int shell = -1;
         int phoneIndex = 0;
         switch (itemId) {
@@ -741,10 +756,38 @@ public class MultiGameService {
         game.token++;
         game.phase = Phase.ROUND_END;
         boolean finalRound = game.round >= ROUNDS - 1;
-        log.info("[multi] round {} end winner={} final={}", game.round, winner, finalRound);
-        broadcast(game, PacketType.MULTI_ROUND_END, new RoundEnd(winner, game.round, finalRound));
+        // 원작 WinRoutine: 이긴 사람에게 라운드 상금
+        if (winner >= 0 && winner < game.seats.size()) game.seats.get(winner).cash += ROUND_CASH[Math.min(game.round, ROUND_CASH.length - 1)];
+        MatchResults results = finalRound ? matchResults(game) : null;
+        log.info("[multi] round {} end winner={} final={} results={}", game.round, winner, finalRound, results);
+        broadcast(game, PacketType.MULTI_ROUND_END, new RoundEnd(winner, game.round, finalRound, results));
         if (finalRound) later(game, timing.winSec(), () -> endGame(game));
         else later(game, timing.winSec(), () -> nextRound(game));
+    }
+
+    /**
+     * 원작 GetMatchResultStatistics: 항목마다 가장 큰(아이템 수는 가장 작은) 자리. 같으면 뒤 자리, 모두 0이면 -1(N/A).
+     * 원작처럼 나간 사람은 빼고 센다.
+     */
+    static MatchResults matchResults(Game game) {
+        return new MatchResults(
+                best(game, s -> s.damageDealt, true), best(game, s -> s.deaths, true), best(game, s -> s.cigarettes, true),
+                best(game, s -> s.shotSelfLive, true), best(game, s -> s.itemsUsed, false), best(game, s -> s.cash, true));
+    }
+
+    private static int best(Game game, java.util.function.ToIntFunction<Seat> stat, boolean highest) {
+        int found = -1;
+        int value = highest ? 0 : Integer.MAX_VALUE;
+        for (int i = 0; i < game.seats.size(); i++) {
+            Seat s = game.seats.get(i);
+            if (s.left) continue;
+            int v = stat.applyAsInt(s);
+            if (highest ? v >= value : v <= value) {
+                value = v;
+                found = i;
+            }
+        }
+        return highest && value == 0 ? -1 : found;
     }
 
     private void endGame(Game game) {

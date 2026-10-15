@@ -486,6 +486,8 @@ class MultiTurnTest {
     @DisplayName("한 명만 남으면 라운드가 끝나고, 3라운드가 지나면 게임이 끝난다")
     void roundsEndAfterLastSurvivor() {
         int shooter = startTurns();
+        int[] damage = new int[3], deaths = new int[3], cash = new int[3];
+        RoundEnd end = null;
         for (int round = 0; round < MultiGameService.ROUNDS; round++) {
             if (round > 0) shooter = firstTurnOfRound(round);
             boolean[] alive = {true, true, true};
@@ -497,15 +499,27 @@ class MultiTurnTest {
                 game.shoot(user(shooter), target);
                 Shot shot = nth(PacketType.MULTI_SHOT, Shot.class, shotsSeen++);
                 assertEquals(shooter, shot.shooter());
+                damage[shooter]++;
+                deaths[target]++;
                 alive[target] = shot.health()[target] > 0;
                 if (aliveCount(alive) > 1) shooter = nth(PacketType.MULTI_TURN, Turn.class, turnsSeen++).seat();
             }
             int winner = alive[0] ? 0 : alive[1] ? 1 : 2;
-            RoundEnd end = nth(PacketType.MULTI_ROUND_END, RoundEnd.class, round);
+            cash[winner] += MultiGameService.ROUND_CASH[round];
+            end = nth(PacketType.MULTI_ROUND_END, RoundEnd.class, round);
             assertEquals(round, end.round());
             assertEquals(winner, end.winnerSeat());
             assertEquals(round == MultiGameService.ROUNDS - 1, end.finalRound());
+            assertEquals(round == MultiGameService.ROUNDS - 1, end.results() != null, "결과는 마지막 라운드에만 온다");
         }
+        // 원작 GetMatchResultStatistics: 가장 큰 값(같으면 뒤 자리), 모두 0이면 -1, 아이템은 가장 적은 사람(같으면 뒤 자리)
+        MultiPackets.MatchResults r = end.results();
+        assertEquals(lastMax(damage), r.mostDamage());
+        assertEquals(lastMax(deaths), r.mostDeaths());
+        assertEquals(lastMax(cash), r.wealthiest());
+        assertEquals(-1, r.chimney());
+        assertEquals(-1, r.leastCareful());
+        assertEquals(2, r.mostResourceful());
         sleep(600);
         int picked = count(1, PacketType.MULTI_SHOTGUN_PICKED, ShotgunPicked.class);
         for (long u = 1; u <= 3; u++) game.pickupShotgun(u);   // 끝난 게임은 더 이상 받지 않는다
@@ -515,6 +529,17 @@ class MultiTurnTest {
 
     private int shotsSeen;
     private int turnsSeen;
+
+    private static int lastMax(int[] values) {
+        int found = -1, best = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] >= best) {
+                best = values[i];
+                found = i;
+            }
+        }
+        return best == 0 ? -1 : found;
+    }
 
     /** userId 1이 받은 type 패킷의 n번째 (0부터). 아직 안 왔으면 4초까지 기다린다 */
     private <T> T nth(String type, Class<T> cls, int n) {

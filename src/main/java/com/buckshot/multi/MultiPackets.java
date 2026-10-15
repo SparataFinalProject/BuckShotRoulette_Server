@@ -101,8 +101,19 @@ public final class MultiPackets {
     public record ShotgunDropped(int seat) {
     }
 
-    /** 한 명만 남아 라운드가 끝났다. finalRound면 게임이 끝난 것이고, 아니면 약 9.3초 뒤 다음 라운드의 RoundStart가 온다 */
-    public record RoundEnd(int winnerSeat, int round, boolean finalRound) {
+    /**
+     * 한 명만 남아 라운드가 끝났다. finalRound면 게임이 끝난 것이고(results에 결과 화면 통계), 아니면 약 9.3초 뒤 다음 라운드의 RoundStart가 온다.
+     * results는 마지막 라운드에만 있다 (아니면 null)
+     */
+    public record RoundEnd(int winnerSeat, int round, boolean finalRound, MatchResults results) {
+    }
+
+    /**
+     * 게임 끝 결과 화면 (원작 GetMatchResultStatistics / MP_OutroManager). 항목마다 자리 번호, 해당자가 없으면 -1.
+     * mostDamage 실탄 피해, mostDeaths 실탄에 맞은 횟수, chimney 담배, leastCareful 자기를 실탄으로 쏜 횟수,
+     * mostResourceful 쓴 아이템이 가장 적은 사람(원작대로 최솟값), wealthiest 라운드 상금
+     */
+    public record MatchResults(int mostDamage, int mostDeaths, int chimney, int leastCareful, int mostResourceful, int wealthiest) {
     }
 
     /**
