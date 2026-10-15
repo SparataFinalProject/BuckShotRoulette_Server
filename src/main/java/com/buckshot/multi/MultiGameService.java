@@ -57,7 +57,7 @@ public class MultiGameService {
     static final int LOAD_DELAY_SEC = 2;            // 모두 아이템 받기를 끝내고 장전이 시작하기까지 (원작 2초)
     static final int READY_TIMEOUT_SEC = 20;
     static final int INTRO_TIMEOUT_SEC = 40;
-    static final int ROUNDS = 3;                    // 원작 라운드 수 (0~2)
+    static final int ROUNDS = 1;                    // [TEST] 원래 3. 원작 라운드 수 (0~2)
     static final int[] ROUND_CASH = {70000, 75000, 80000};   // 원작 WinRoutine: 라운드 0~2 승자 상금 (결과 화면 "최고 자산가")
     static final int CHAT_MAX_LENGTH = 100;         // 채팅 한 줄 최대 글자 수
     static final long CHAT_MIN_INTERVAL_MS = 500;   // 도배 방지: 한 사람이 이 시간 안에 또 보낸 채팅은 버린다
