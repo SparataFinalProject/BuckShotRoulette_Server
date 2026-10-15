@@ -53,6 +53,11 @@ public class DevRoomHandlers {
         return handler(PacketType.ROOM_LIST_WATCH, DevRoomPackets.ListWatch.class, (ctx, d) -> rooms.watch(ctx.userId(), d.watch()));
     }
 
+    @Bean
+    PacketHandler<DevRoomPackets.Empty> roomStateRequestHandler(DevRoomService rooms) {
+        return handler(PacketType.ROOM_STATE_REQUEST, DevRoomPackets.Empty.class, (ctx, d) -> rooms.requestState(ctx.userId()));
+    }
+
     private static <T> PacketHandler<T> handler(String type, Class<T> dataType, BiConsumer<WsContext, T> handle) {
         return new PacketHandler<>() {
             @Override

@@ -24,15 +24,34 @@ class DevRoomServiceTest {
 
     private PacketSender sender;
     private DevMatchService match;
+    private com.buckshot.multi.MultiGameService multi;
     private DevRoomService rooms;
 
     @BeforeEach
     void setUp() {
         sender = mock(PacketSender.class);
         match = mock(DevMatchService.class);
+        multi = mock(com.buckshot.multi.MultiGameService.class);
         UserService users = mock(UserService.class);
         when(users.getProfile(anyLong())).thenAnswer(i -> new PlayerProfileResponse(i.getArgument(0), "p" + i.getArgument(0), 0, 0, 1000, "BRONZE"));
-        rooms = new DevRoomService(sender, users, match, mock(com.buckshot.multi.MultiGameService.class));
+        rooms = new DevRoomService(sender, users, match, multi);
+    }
+
+    /** 3~4인 방을 만들어 시작하고, 게임이 끝났을 때 부를 콜백을 돌려준다 */
+    private Runnable startFourPlayer(int total) {
+        rooms.create(1);
+        rooms.setFourPlayer(1, true);
+        for (long u = 2; u <= total; u++) rooms.join(u, null, code(1));
+        rooms.start(1);
+        ArgumentCaptor<Runnable> ended = ArgumentCaptor.forClass(Runnable.class);
+        verify(multi).create(any(), ended.capture());
+        return ended.getValue();
+    }
+
+    private int stateCount(long userId) {
+        return (int) org.mockito.Mockito.mockingDetails(sender).getInvocations().stream()
+                .filter(i -> i.getMethod().getName().equals("sendTo") && i.getArgument(0).equals(userId) && PacketType.ROOM_STATE.equals(i.getArgument(1)))
+                .count();
     }
 
     private String code(long host) {
@@ -115,6 +134,49 @@ class DevRoomServiceTest {
         rooms.start(1);
         verify(match).startPair(1L, 2L);
         verify(sender, never()).sendTo(anyLong(), eq(PacketType.ROOM_START_MULTI), any());
+    }
+
+    @Test
+    @DisplayName("3~4인 방은 게임 동안 남아 있다가(목록에 안 보이고 못 들어옴) 게임이 끝나면 같은 사람끼리 다시 열린다")
+    void fourPlayerRoomReopensAfterGame() {
+        Runnable ended = startFourPlayer(3);
+        String code = code(1);
+        // 게임 중: 목록에 없고, 코드로도 못 들어오고, 상태를 물어도 답하지 않는다
+        rooms.watch(7, true);
+        ArgumentCaptor<Object> list = ArgumentCaptor.forClass(Object.class);
+        verify(sender).sendTo(eq(7L), eq(PacketType.ROOM_LIST), list.capture());
+        assertTrue(((DevRoomPackets.RoomList) list.getValue()).rooms().isEmpty());
+        rooms.join(9, null, code);
+        verify(sender).sendTo(9L, PacketType.ROOM_JOIN_FAILED, new DevRoomPackets.JoinFailed(DevRoomPackets.JoinFailReason.CLOSED));
+        int before = stateCount(2);
+        rooms.requestState(2);
+        assertEquals(before, stateCount(2));
+
+        // 게임이 끝나면 모두에게 같은 방(같은 코드, 같은 방장, 참가 순서 그대로)
+        ended.run();
+        for (long u = 1; u <= 3; u++) {
+            var s = lastState(u);
+            assertEquals(code, s.code());
+            assertEquals(1L, s.hostUserId());
+            assertEquals(java.util.List.of(1L, 2L, 3L), s.members().stream().map(DevRoomPackets.Member::userId).toList());
+        }
+        // 로비로 돌아와 물으면 다시 알려 준다
+        before = stateCount(3);
+        rooms.requestState(3);
+        assertEquals(before + 1, stateCount(3));
+    }
+
+    @Test
+    @DisplayName("게임 중에 끊긴 사람은 다시 열린 방에 없다")
+    void leaverIsNotInReopenedRoom() {
+        Runnable ended = startFourPlayer(4);
+        rooms.onDisconnected(new com.buckshot.ws.session.UserDisconnectedEvent(3));
+        ended.run();
+        assertEquals(java.util.List.of(1L, 2L, 4L), lastState(1).members().stream().map(DevRoomPackets.Member::userId).toList());
+        // 끊긴 사람은 방이 없다
+        int before = stateCount(3);
+        rooms.requestState(3);
+        assertEquals(before, stateCount(3));
     }
 
     @Test

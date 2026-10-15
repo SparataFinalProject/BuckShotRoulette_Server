@@ -159,7 +159,8 @@ public class MultiGameService {
         boolean itemPhase;     // MULTI_ITEM_PHASE_BEGIN을 보냄
         boolean loadScheduled; // 모두 아이템 받기를 끝내 장전을 예약함
         boolean over;
-        ShellDeck deck;                                    // 셸 묶음 뽑기 (게임 내내 이어진다)
+        Runnable onEnded;                                  // 마지막 라운드까지 끝났을 때 (endGame)
+        ShellDeck deck;                                   // 셸 묶음 뽑기 (게임 내내 이어진다)
         boolean[] shotgun = new boolean[0];                // 총 속의 실제 셸 순서 (true = 실탄). 서버만 안다
         int firstTurnSeat;                                 // 이번 라운드 선공 (원작 MAIN_active_first_turn_socket)
         int round;                                         // 0~2
@@ -181,7 +182,13 @@ public class MultiGameService {
     private final Map<Long, Game> chatGameByUser = new HashMap<>();
 
     public void create(List<Member> players) {
+        create(players, null);
+    }
+
+    /** onEnded: 마지막 라운드까지 끝나 게임이 정리될 때 한 번 부른다 (방을 다시 열 때, DevRoomService) */
+    public void create(List<Member> players, Runnable onEnded) {
         Game game = new Game();
+        game.onEnded = onEnded;
         for (Member m : players) game.seats.add(new Seat(m.userId()));
         game.deck = new ShellDeck(players.size(), random);
         synchronized (this) {
@@ -793,6 +800,8 @@ public class MultiGameService {
     private void endGame(Game game) {
         game.over = true;
         for (Seat s : game.seats) gameByUser.remove(s.userId, game);
+        // 이 잠금 밖에서 부른다 (방 서비스가 자기 잠금을 잡는다)
+        if (game.onEnded != null) TIMER.execute(game.onEnded);
     }
 
     /** 테스트용: 자리 칸에 아이템을 놓아 둔다 */

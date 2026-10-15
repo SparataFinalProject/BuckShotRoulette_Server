@@ -32,6 +32,7 @@ public final class PacketType {
     public static final String MULTI_USE_ITEM = "MULTI_USE_ITEM";        // 3~4인 전용 게임: 내 차례에 내 칸(cell)의 아이템을 쓴다
     public static final String MULTI_ITEM_SECONDARY = "MULTI_ITEM_SECONDARY";   // 3~4인 전용 게임: 재머 대상(target) / 아드레날린으로 훔칠 아이템(target 자리, cell)을 골랐다
     public static final String ROOM_LIST_WATCH = "ROOM_LIST_WATCH";      // 개발용 방: 방 목록 화면을 열고 닫음 (여는 동안 바뀔 때마다 ROOM_LIST)
+    public static final String ROOM_STATE_REQUEST = "ROOM_STATE_REQUEST";   // 개발용 방: 로비에 들어와 지금 있는 방을 묻는다 (있으면 ROOM_STATE, 게임이 끝나 다시 열린 방)
 
     // S2C
     public static final String MATCH_QUEUED = "MATCH_QUEUED";
