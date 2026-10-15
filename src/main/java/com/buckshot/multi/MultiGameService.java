@@ -83,8 +83,8 @@ public class MultiGameService {
 
     // 원작 MP_ItemResource (배분, 한 사람 상한, 테이블 전체 상한). 상한 약(7)은 3~4인 모드에 없다 (싱글·1대1 전용). 다시 넣지 않는다
     private static final List<ItemRule> RULES = List.of(
-            new ItemRule(1, 2, 64), new ItemRule(2, 2, 64), new ItemRule(JAMMER, 1, 1), new ItemRule(4, 1, 64), new ItemRule(5, 8, 64),
-            new ItemRule(BURNER_PHONE, 8, 64), new ItemRule(ADRENALINE, 4, 64), new ItemRule(INVERTER, 4, 64), new ItemRule(REMOTE, 1, 2));
+            new ItemRule(1, 2, 32), new ItemRule(2, 2, 32), new ItemRule(JAMMER, 1, 1), new ItemRule(4, 1, 32), new ItemRule(5, 8, 32),
+            new ItemRule(BURNER_PHONE, 8, 32), new ItemRule(ADRENALINE, 4, 32), new ItemRule(INVERTER, 4, 32), new ItemRule(REMOTE, 1, 2));
 
     /**
      * 아이템 사용 연출 길이 (원작 1인칭: 테이블에서 집기 0.6 + "use item id N first person" + 끝 0.2). 인덱스는 아이템 번호.
