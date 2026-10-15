@@ -20,6 +20,10 @@ public final class MultiPackets {
     public record UseItem(int cell) {
     }
 
+    /** 재머: 고른 대상 자리(target). 아드레날린: 훔칠 아이템이 있는 자리(target)와 칸(cell) (원작 secondary item interaction request) */
+    public record ItemSecondary(int target, int cell) {
+    }
+
     // S2C
     /** seat가 채팅을 보냈다 (보낸 사람 자신에게도 온다) */
     public record ChatMessage(int seat, String text) {
@@ -52,7 +56,10 @@ public final class MultiPackets {
     public record LoadShotgun(boolean[] sequence, int firstTurnSeat) {
     }
 
-    /** 이 자리가 차례다 (원작 pass turn). reason: next(다음 사람), keep(자기를 공포탄으로 쏴 그대로), timeout(제한 시간이 지나 넘어옴). 첫 차례는 LoadShotgun.firstTurnSeat */
+    /**
+     * 이 자리가 차례다 (원작 pass turn). reason: next(다음 사람), keep(자기를 공포탄으로 쏴 그대로), timeout(제한 시간이 지나 넘어옴),
+     * jammed(재머에 걸려 이번 차례를 넘김: timeoutSec 0, 곧 다음 Turn이 온다), unjammed(재머가 풀리고 차례를 받음). 첫 차례는 LoadShotgun.firstTurnSeat
+     */
     public record Turn(int seat, int timeoutSec, String reason) {
     }
 
@@ -72,11 +79,22 @@ public final class MultiPackets {
     }
 
     /**
-     * seat가 자기 칸 cell의 itemId를 썼다 (원작 interact with item). shell: 맥주로 뺀 셸이나 돋보기로 본 셸 (1 실탄, 0 공포탄, -1 모름/없음).
-     * 돋보기의 셸은 쓴 사람에게만 가고 나머지에게는 -1. health는 쓴 뒤 자리별 체력(담배), shellsLeft는 남은 셸 수, sawed는 총열이 잘린 상태.
+     * seat가 자기 칸 cell의 itemId를 썼다 (원작 interact with item). shell: 맥주로 뺀 셸이나 돋보기로 본 셸, 대포폰이 알려 준 셸 (1 실탄, 0 공포탄, -1 모름/없음).
+     * 돋보기·대포폰의 셸은 쓴 사람에게만 가고 나머지에게는 -1. health는 쓴 뒤 자리별 체력(담배), shellsLeft는 남은 셸 수, sawed는 총열이 잘린 상태.
+     * stolen이면 아드레날린으로 fromSeat 자리 칸 cell의 아이템을 훔쳐 바로 쓴 것 (아니면 fromSeat = seat).
+     * phoneIndex: 대포폰이 알려 준 셸 순번(3~7, 쓴 사람에게만), -1이면 셸이 2개 이하라 알려 주지 못함, 0이면 모름. turnCw: 지금 턴 방향 (리모컨으로 바뀐다).
      * 쓰는 동안(원작 고정 시간)에는 다른 행동을 받지 않고, 끝나면 차례가 그대로 이어진다 (맥주로 셸이 다 떨어지면 아이템 받기부터 다시).
+     * 재머(3)·아드레날린(8)은 이어서 ItemSecondary로 고르고 ItemSecondaryDone(또는 훔친 아이템의 ItemUsed)이 온다.
      */
-    public record ItemUsed(int seat, int cell, int itemId, int shell, int shellsLeft, int[] health, boolean sawed) {
+    public record ItemUsed(int seat, int cell, int itemId, int shell, int shellsLeft, int[] health, boolean sawed,
+            boolean stolen, int fromSeat, int phoneIndex, boolean turnCw) {
+    }
+
+    /**
+     * 재머·아드레날린의 두 번째 단계 결과 (원작 interact with item secondary / timeout exceeded).
+     * 재머: target 자리가 다음 차례를 넘긴다 (timedOut이면 target -1, 그냥 내려놓음). 아드레날린: 제한 시간이 지나 아무것도 훔치지 못했을 때만 온다.
+     */
+    public record ItemSecondaryDone(int seat, int itemId, int target, boolean timedOut) {
     }
 
     /** seat가 대상을 고르지 못해 총을 내려놓았다 (원작 timeout exceeded). 이어서 Turn(reason=timeout)이 온다 */

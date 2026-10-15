@@ -219,8 +219,8 @@ class MultiTurnTest {
     }
 
     @Test
-    @DisplayName("아이템은 쇠톱·돋보기·담배·맥주만 나온다")
-    void onlyFourItems() {
+    @DisplayName("상한 약(7)은 나오지 않고, 재머는 테이블 전체에 하나까지")
+    void noExpiredMedicine() {
         for (long u = 1; u <= 3; u++) game.ready(u);
         for (long u = 1; u <= 3; u++) game.introDone(u);
         for (long u = 1; u <= 3; u++) {
@@ -229,11 +229,166 @@ class MultiTurnTest {
                 game.placeItem(u, i);
             }
         }
+        int jammers = 0;
         synchronized (sent) {
             for (Sent s : sent) {
-                if (s.data instanceof MultiPackets.ItemGrabbed g) assertTrue(java.util.Set.of(1, 2, 4, 5).contains(g.itemId()), "나오면 안 되는 아이템 " + g.itemId());
+                if (s.userId == 1 && s.data instanceof MultiPackets.ItemGrabbed g) {
+                    assertTrue(g.itemId() >= 1 && g.itemId() <= 10 && g.itemId() != 7, "나오면 안 되는 아이템 " + g.itemId());
+                    if (g.itemId() == MultiGameService.JAMMER) jammers++;
+                }
             }
         }
+        assertTrue(jammers <= 1, "재머가 " + jammers + "개");
+    }
+
+    @Test
+    @DisplayName("재머: 고른 사람은 다음 차례를 한 번 넘기고(jammed), 그다음에 풀린다(unjammed)")
+    void jammerSkipsTargetOnce() {
+        int first = startTurns();
+        int target = (first + 1) % 3;
+        int after = (first + 2) % 3;
+        game.setItemForTest(user(first), 7, MultiGameService.JAMMER);
+        game.useItem(user(first), 7);
+        assertNotNull(await(user(first), PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == MultiGameService.JAMMER));
+        game.itemSecondary(user(first), first, 0);   // 자기는 고를 수 없다
+        sleep(30);
+        assertEquals(0, count(1, PacketType.MULTI_ITEM_SECONDARY_DONE, MultiPackets.ItemSecondaryDone.class));
+        game.itemSecondary(user(first), target, 0);
+        MultiPackets.ItemSecondaryDone done = await(1, PacketType.MULTI_ITEM_SECONDARY_DONE, MultiPackets.ItemSecondaryDone.class, x -> true);
+        assertNotNull(done);
+        assertEquals(target, done.target());
+        assertFalse(done.timedOut());
+        // 차례가 이어지다가 제한 시간이 지나면 걸린 사람은 넘기고 그다음 사람에게
+        Turn skip = await(1, PacketType.MULTI_TURN, Turn.class, x -> x.seat() == target);
+        assertNotNull(skip);
+        assertEquals("jammed", skip.reason());
+        assertEquals(0, skip.timeoutSec());
+        Turn next = await(1, PacketType.MULTI_TURN, Turn.class, x -> x.seat() == after);
+        assertNotNull(next);
+        // 한 바퀴 돌아 다시 오면 풀린다
+        Turn unjam = await(1, PacketType.MULTI_TURN, Turn.class, x -> x.seat() == target && x.reason().equals("unjammed"));
+        assertNotNull(unjam, "풀리지 않았다");
+    }
+
+    @Test
+    @DisplayName("재머: 고르지 않으면 제한 시간 뒤 내려놓고 차례가 이어진다")
+    void jammerTimeout() {
+        int first = startTurns();
+        game.setItemForTest(user(first), 7, MultiGameService.JAMMER);
+        game.useItem(user(first), 7);
+        MultiPackets.ItemSecondaryDone done = await(1, PacketType.MULTI_ITEM_SECONDARY_DONE, MultiPackets.ItemSecondaryDone.class, x -> true);
+        assertNotNull(done);
+        assertTrue(done.timedOut());
+        assertEquals(-1, done.target());
+        sleep(100);
+        game.pickupShotgun(user(first));   // 차례가 이어진다
+        assertNotNull(await(1, PacketType.MULTI_SHOTGUN_PICKED, ShotgunPicked.class, x -> x.seat() == first));
+    }
+
+    @Test
+    @DisplayName("아드레날린: 다른 사람의 아이템을 훔쳐 바로 쓰고, 아드레날린은 훔칠 수 없다")
+    void adrenalineSteals() {
+        int first = startTurns();
+        int victim = (first + 1) % 3;
+        game.setItemForTest(user(victim), 2, 4);
+        game.setItemForTest(user(victim), 3, MultiGameService.ADRENALINE);
+        game.setItemForTest(user(first), 7, MultiGameService.ADRENALINE);
+        game.useItem(user(first), 7);
+        assertNotNull(await(1, PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == MultiGameService.ADRENALINE));
+        game.itemSecondary(user(first), victim, 3);   // 아드레날린
+        game.itemSecondary(user(first), first, 0);    // 자기 칸
+        sleep(30);
+        assertEquals(1, count(1, PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class));
+        game.itemSecondary(user(first), victim, 2);
+        MultiPackets.ItemUsed stolen = await(1, PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, MultiPackets.ItemUsed::stolen);
+        assertNotNull(stolen);
+        assertEquals(first, stolen.seat());
+        assertEquals(victim, stolen.fromSeat());
+        assertEquals(2, stolen.cell());
+        assertEquals(4, stolen.itemId());
+    }
+
+    @Test
+    @DisplayName("아드레날린: 고르지 않으면 제한 시간 뒤 끝나고 차례가 이어진다")
+    void adrenalineTimeout() {
+        int first = startTurns();
+        game.setItemForTest(user((first + 1) % 3), 2, 4);
+        game.setItemForTest(user(first), 7, MultiGameService.ADRENALINE);
+        game.useItem(user(first), 7);
+        MultiPackets.ItemSecondaryDone done = await(1, PacketType.MULTI_ITEM_SECONDARY_DONE, MultiPackets.ItemSecondaryDone.class, x -> true);
+        assertNotNull(done);
+        assertEquals(MultiGameService.ADRENALINE, done.itemId());
+        assertTrue(done.timedOut());
+    }
+
+    @Test
+    @DisplayName("인버터: 첫 셸이 반대로 바뀐다")
+    void inverterFlips() {
+        int first = startTurns();
+        game.setItemForTest(user(first), 7, MultiGameService.INVERTER);
+        game.setChamberForTest(user(first), true, false);
+        game.useItem(user(first), 7);
+        assertNotNull(await(1, PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == MultiGameService.INVERTER));
+        sleep(150);
+        game.pickupShotgun(user(first));
+        game.shoot(user(first), first);
+        Shot shot = await(1, PacketType.MULTI_SHOT, Shot.class, x -> true);
+        assertFalse(shot.live());
+    }
+
+    @Test
+    @DisplayName("리모컨: 턴 방향이 반대로 바뀐다")
+    void remoteReverses() {
+        int first = startTurns();
+        game.setItemForTest(user(first), 7, MultiGameService.REMOTE);
+        game.useItem(user(first), 7);
+        MultiPackets.ItemUsed used = await(1, PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == MultiGameService.REMOTE);
+        assertFalse(used.turnCw());
+        Turn next = await(1, PacketType.MULTI_TURN, Turn.class, x -> true);   // 제한 시간이 지나 넘어간다
+        assertEquals((first + 2) % 3, next.seat());
+    }
+
+    @Test
+    @DisplayName("대포폰: 세 번째 이후 셸 하나를 쓴 사람만 알고, 셸이 2개 이하면 알려 주지 못한다")
+    void burnerPhone() {
+        int first = startTurns();
+        int other = (first + 1) % 3;
+        game.setItemForTest(user(first), 6, MultiGameService.BURNER_PHONE);
+        game.setItemForTest(user(first), 7, MultiGameService.BURNER_PHONE);
+        boolean[] chamber = {true, true, false, true};
+        game.setChamberForTest(user(first), chamber);
+        game.useItem(user(first), 6);
+        MultiPackets.ItemUsed mine = await(user(first), PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == MultiGameService.BURNER_PHONE);
+        MultiPackets.ItemUsed theirs = await(user(other), PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == MultiGameService.BURNER_PHONE);
+        assertTrue(mine.phoneIndex() == 3 || mine.phoneIndex() == 4, "순번 " + mine.phoneIndex());
+        assertEquals(chamber[mine.phoneIndex() - 1] ? 1 : 0, mine.shell());
+        assertEquals(0, theirs.phoneIndex());
+        assertEquals(-1, theirs.shell());
+        sleep(150);
+        game.setChamberForTest(user(first), true, false);
+        game.useItem(user(first), 7);
+        MultiPackets.ItemUsed unfortunate = nth(PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, user(first) == 1 ? 1 : 0);
+        if (user(first) == 1) assertEquals(-1, unfortunate.phoneIndex());
+    }
+
+    @Test
+    @DisplayName("대포폰 순번: 셸 3개 이상이면 3~셸 수(최대 7)")
+    void phoneIndexRange() {
+        java.util.Random random = new java.util.Random(1);
+        assertEquals(-1, MultiGameService.phoneIndex(2, random));
+        for (int i = 0; i < 200; i++) {
+            int n = 3 + random.nextInt(6);
+            int index = MultiGameService.phoneIndex(n, random);
+            assertTrue(index >= 3 && index <= Math.min(n, 7), "셸 " + n + "개에서 " + index);
+        }
+    }
+
+    @Test
+    @DisplayName("턴 방향 CCW면 자리 번호가 작은 쪽으로")
+    void nextTurnCcw() {
+        assertEquals(2, MultiGameService.nextTurn(0, new boolean[] {true, true, true}, false));
+        assertEquals(0, MultiGameService.nextTurn(1, new boolean[] {true, true, true}, false));
+        assertEquals(1, MultiGameService.nextTurn(3, new boolean[] {true, true, false, true}, false));
     }
 
     @Test

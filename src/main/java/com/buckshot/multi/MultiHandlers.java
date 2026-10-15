@@ -57,6 +57,11 @@ public class MultiHandlers {
         return handler(PacketType.MULTI_USE_ITEM, MultiPackets.UseItem.class, (ctx, d) -> game.useItem(ctx.userId(), d.cell()));
     }
 
+    @Bean
+    PacketHandler<MultiPackets.ItemSecondary> multiItemSecondaryHandler(MultiGameService game) {
+        return handler(PacketType.MULTI_ITEM_SECONDARY, MultiPackets.ItemSecondary.class, (ctx, d) -> game.itemSecondary(ctx.userId(), d.target(), d.cell()));
+    }
+
     private static <T> PacketHandler<T> handler(String type, Class<T> dataType, BiConsumer<WsContext, T> handle) {
         return new PacketHandler<>() {
             @Override

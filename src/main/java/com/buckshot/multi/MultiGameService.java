@@ -6,6 +6,7 @@ import com.buckshot.multi.MultiPackets.ItemGrabbed;
 import com.buckshot.multi.MultiPackets.ItemPhaseBegin;
 import com.buckshot.multi.MultiPackets.ItemPhaseDone;
 import com.buckshot.multi.MultiPackets.ItemPlaced;
+import com.buckshot.multi.MultiPackets.ItemSecondaryDone;
 import com.buckshot.multi.MultiPackets.ItemUsed;
 import com.buckshot.multi.MultiPackets.LoadShotgun;
 import com.buckshot.multi.MultiPackets.LookAt;
@@ -69,22 +70,42 @@ public class MultiGameService {
          * loadToTurn: 장전 패킷 뒤 셸 순서를 보여 주고(0.7+5+1.7) 첫 차례로 카메라가 가기까지(0.2+0.9). turnStart: 차례 패킷 뒤 카메라가 도착하기까지.
          * turnTimeout 20, targetTimeout 21: 원작 MAIN_timeout_duration_turn / _shotgun_target_selection. shot 3.8: 쏘는 연출(1인칭 3.6+0.2, 3인칭 0.25+1.9+1.65).
          * drop: 총을 내려놓는 연출. win 9.3: 원작 WinRoutine(0.5+2+6.4+0.4). nextRoundItem: 새 라운드 표시·체력·번개를 다시 켜고 아이템 받기까지(추정)
-         * itemUseScale: ITEM_USE_SEC에 곱한다 (원작 1)
+         * itemUseScale: ITEM_USE_SEC와 재머·아드레날린 고르기 시간에 곱한다 (원작 1)
          */
         static final Timing ORIGINAL = new Timing(8.5, 1.1, 30, 21, 3.8, 1.0, 9.3, 6.0, 1.0);
     }
 
     enum Phase {
-        ITEMS, LOADING, TURN, ITEM_USE, TARGETING, DROPPING, SHOOTING, ROUND_END
+        ITEMS, LOADING, TURN, ITEM_USE, ITEM_SECONDARY, JAM_SKIP, TARGETING, DROPPING, SHOOTING, ROUND_END
     }
 
-    // 지금은 사용 연출이 있는 쇠톱(1), 돋보기(2), 담배(4), 맥주(5)만 나눠 준다. 나머지는 연출을 만들면 다시 넣는다:
-    // new ItemRule(3, 1, 1), new ItemRule(6, 8, 64), new ItemRule(8, 4, 64), new ItemRule(9, 4, 64), new ItemRule(10, 1, 2)
-    private static final List<ItemRule> RULES = List.of(
-            new ItemRule(1, 2, 64), new ItemRule(2, 2, 64), new ItemRule(4, 1, 64), new ItemRule(5, 8, 64));
+    static final int JAMMER = 3, BURNER_PHONE = 6, ADRENALINE = 8, INVERTER = 9, REMOTE = 10;
 
-    /** 아이템 사용 연출 길이 (원작 1인칭: 테이블에서 집기 0.6 + "use item id N first person" + 끝 0.2). 인덱스는 아이템 번호 */
-    static final double[] ITEM_USE_SEC = {0, 0.6 + 2.87 + 0.2, 0.6 + 3.85 + 0.2, 0, 0.6 + 3.74 + 0.2, 0.6 + 3.84 + 0.2};
+    // 원작 MP_ItemResource (배분, 한 사람 상한, 테이블 전체 상한). 상한 약(7)은 3~4인 모드에 없다 (싱글·1대1 전용). 다시 넣지 않는다
+    private static final List<ItemRule> RULES = List.of(
+            new ItemRule(1, 2, 64), new ItemRule(2, 2, 64), new ItemRule(JAMMER, 1, 1), new ItemRule(4, 1, 64), new ItemRule(5, 8, 64),
+            new ItemRule(BURNER_PHONE, 8, 64), new ItemRule(ADRENALINE, 4, 64), new ItemRule(INVERTER, 4, 64), new ItemRule(REMOTE, 1, 2));
+
+    /**
+     * 아이템 사용 연출 길이 (원작 1인칭: 테이블에서 집기 0.6 + "use item id N first person" + 끝 0.2). 인덱스는 아이템 번호.
+     * 리모컨은 애니메이션(2.5) 1.6초에 카메라가 가운데를 보고 돌아오는 연출(0.6 + 1.2 + 0.9)이 끝날 때까지.
+     * 재머·아드레날린은 고르기 단계가 있어 따로 센다 (0)
+     */
+    static final double[] ITEM_USE_SEC = {0, 0.6 + 2.87 + 0.2, 0.6 + 3.85 + 0.2, 0, 0.6 + 3.74 + 0.2, 0.6 + 3.84 + 0.2,
+            0.6 + 3.72 + 0.2, 0, 0, 0.6 + 1.9 + 0.2, 0.6 + 1.6 + 2.7 + 0.2};
+    /** 훔친 아이템은 0.2초 뒤 카메라가 기본 시점으로 돌아오는 동안(0.6) 집어 와서 조금 늦게 끝난다 (원작 PanCameraBack) */
+    static final double STOLEN_EXTRA_SEC = 0.2;
+    /** 원작 MAIN_timeout_duration_jammer 12 / _adrenaline 8 + MP_UserTimeout_Branch가 더하는 0.6. 아드레날린은 쓰고 1.2초 뒤부터 센다 */
+    static final double JAMMER_TIMEOUT_SEC = 12.6;
+    static final double ADRENALINE_DELAY_SEC = 1.2;
+    static final double ADRENALINE_TIMEOUT_SEC = 8.6;
+    /** 재머 결과 연출: 장치를 내려놓으며 카메라가 대상 쪽으로(0.4) 전광판이 꺼지고(0.4) 원래 시점으로(0.6) */
+    static final double JAMMER_RESULT_SEC = 1.5;
+    /** 제한 시간이 지나 내려놓는 연출 (재머: secondary exit 0.6 + 카메라 0.6, 아드레날린: 카메라 0.6) */
+    static final double JAMMER_TIMEOUT_EXIT_SEC = 1.2;
+    static final double ADRENALINE_TIMEOUT_EXIT_SEC = 0.6;
+    /** 원작 PassTurn: 재머에 걸린 사람에게 차례가 오면 카메라가 도착하고 0.7초 뒤 다음 사람에게 넘어간다 */
+    static final double JAM_SKIP_SEC = 0.8;
 
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "multi-game-timer");
@@ -109,6 +130,8 @@ public class MultiGameService {
         boolean left;                         // 연결이 끊겨 나갔다
         int health = STARTING_HEALTH;
         boolean holdingShotgun;               // 총을 집었다 (대상을 고르는 중)
+        boolean jammed;                       // 재머에 걸렸다 (원작 is_jammed)
+        boolean jamChecked;                   // 걸린 뒤 차례를 한 번 넘겼다 (원작 jammer_checked). 다음 차례에 풀린다
 
         Seat(long userId) {
             this.userId = userId;
@@ -137,6 +160,9 @@ public class MultiGameService {
         boolean sawedOff;                                  // 쇠톱으로 총열을 잘랐다: 다음 사격 피해 2 (원작 MAIN_barrel_sawed_off)
         boolean turnExpiredDuringItem;                     // 아이템을 쓰는 동안 차례 제한 시간이 지났다 (쓰기가 끝나면 넘긴다)
         int firstDeadSeat = -1;                            // 지난 라운드에 처음 죽은 자리 (원작 MAIN_active_first_socket_to_die). 사격이 생기면 기록한다
+        boolean turnCw = true;                             // 턴 방향 (원작 MAIN_active_turn_order). 라운드마다 CW, 리모컨으로 뒤집힌다
+        int secondaryItem;                                 // ITEM_SECONDARY 단계에서 고르는 중인 아이템 (재머 3 / 아드레날린 8)
+        int secondaryToken;                                // 고르기 제한 시간 타이머 구분 (차례 제한 시간 타이머는 token으로 그대로 둔다)
     }
 
     private final Map<Long, Game> gameByUser = new HashMap<>();
@@ -255,7 +281,7 @@ public class MultiGameService {
             // 차례였던 사람이 나갔으면 넘기고, 한 명만 남았으면 라운드를 끝낸다
             int winner = winnerSeat(game);
             if (winner != -1) roundEnd(game, winner);
-            else if (indexOf(game, seat) == game.turnSeat) beginTurn(game, nextTurn(game.turnSeat, alive(game)), true, "timeout");
+            else if (indexOf(game, seat) == game.turnSeat) beginTurn(game, nextTurn(game.turnSeat, alive(game), game.turnCw), true, "timeout");
         }
     }
 
@@ -291,6 +317,7 @@ public class MultiGameService {
         game.loadScheduled = false;
         game.checkingFirstDeath = true;
         game.sawedOff = false;
+        game.turnCw = true;   // 원작 "first round routine": 턴 순서는 CW로, 재머는 모두 풀린다 (UnJamAllUsers)
         game.chamber.clear();
         int n = game.seats.size();
         game.firstTurnSeat = pickFirstTurn(connected(game), game.firstDeadSeat, random);
@@ -305,6 +332,8 @@ public class MultiGameService {
             s.placed = 0;
             s.holding = 0;
             s.holdingShotgun = false;
+            s.jammed = false;
+            s.jamChecked = false;
             s.finished = s.left;
             s.target = s.left ? 0 : common;
             counts[i] = s.target;
@@ -382,7 +411,7 @@ public class MultiGameService {
         for (boolean live : draw.inGun()) game.chamber.add(live);
         // 원작 PassTurn: 선공이 그 사이 나갔거나 죽었으면 다음 자리로 넘긴다
         boolean[] alive = alive(game);
-        int first = alive[game.firstTurnSeat] ? game.firstTurnSeat : nextTurn(game.firstTurnSeat, alive);
+        int first = alive[game.firstTurnSeat] ? game.firstTurnSeat : nextTurn(game.firstTurnSeat, alive, game.turnCw);
         game.firstTurnSeat = first;
         game.turnSeat = first;
         log.info("[multi] load shotgun visible={} firstTurn={}", java.util.Arrays.toString(draw.visible()), first);
@@ -403,7 +432,10 @@ public class MultiGameService {
         }, Math.round(seconds * 1000), TimeUnit.MILLISECONDS);
     }
 
-    /** announce가 false면(장전 직후 첫 차례) 클라이언트가 이미 스스로 차례를 넘겼으니 패킷을 보내지 않는다 */
+    /**
+     * announce가 false면(장전 직후 첫 차례) 클라이언트가 이미 스스로 차례를 넘겼으니 패킷을 보내지 않는다.
+     * 원작 PassTurn의 재머: 걸린 사람에게 처음 차례가 오면 넘기고(jammed), 다음에 오면 풀고 차례를 준다(unjammed). 클라이언트도 같은 규칙으로 연출한다
+     */
     private void beginTurn(Game game, int seat, boolean announce, String reason) {
         int winner = winnerSeat(game);
         if (winner != -1) {
@@ -415,6 +447,20 @@ public class MultiGameService {
         game.phase = Phase.TURN;
         game.turnExpiredDuringItem = false;
         for (Seat s : game.seats) s.holdingShotgun = false;
+        Seat turnSeat = game.seats.get(seat);
+        if (turnSeat.jammed) {
+            if (!turnSeat.jamChecked) {
+                turnSeat.jamChecked = true;
+                game.phase = Phase.JAM_SKIP;
+                log.info("[multi] jammed seat={} skips turn", seat);
+                if (announce) broadcast(game, PacketType.MULTI_TURN, new Turn(seat, 0, "jammed"));
+                later(game, (announce ? timing.turnStartSec() : 0) + JAM_SKIP_SEC, () -> beginTurn(game, nextTurn(seat, alive(game), game.turnCw), true, "next"));
+                return;
+            }
+            turnSeat.jammed = false;
+            turnSeat.jamChecked = false;
+            reason = "unjammed";
+        }
         if (announce) broadcast(game, PacketType.MULTI_TURN, new Turn(seat, timing.turnTimeoutSec(), reason));
         later(game, timing.turnTimeoutSec() + (announce ? timing.turnStartSec() : 0), () -> onTurnTimeout(game, seat));
     }
@@ -422,14 +468,14 @@ public class MultiGameService {
     /** 원작 timeout exceeded(turn): 총을 집지 않고 제한 시간이 지나면 다음 사람에게 넘어간다 */
     private void onTurnTimeout(Game game, int seat) {
         if (game.turnSeat != seat) return;
-        // 원작: 아이템을 쓰는 중에 시간이 다 되면 쓰기가 끝난 뒤 넘긴다
-        if (game.phase == Phase.ITEM_USE) {
+        // 원작: 아이템을 쓰는 중(재머·아드레날린으로 고르는 중 포함)에 시간이 다 되면 쓰기가 끝난 뒤 넘긴다
+        if (game.phase == Phase.ITEM_USE || game.phase == Phase.ITEM_SECONDARY) {
             game.turnExpiredDuringItem = true;
             return;
         }
         if (game.phase != Phase.TURN) return;
         log.info("[multi] turn timeout seat={}", seat);
-        beginTurn(game, nextTurn(seat, alive(game)), true, "timeout");
+        beginTurn(game, nextTurn(seat, alive(game), game.turnCw), true, "timeout");
     }
 
     /** 원작 pickup shotgun request(10) -> pickup shotgun(11) */
@@ -467,7 +513,7 @@ public class MultiGameService {
         game.phase = Phase.DROPPING;
         game.seats.get(seat).holdingShotgun = false;
         broadcast(game, PacketType.MULTI_SHOTGUN_DROPPED, new ShotgunDropped(seat));
-        later(game, timing.dropSec(), () -> beginTurn(game, nextTurn(seat, alive(game)), true, "timeout"));
+        later(game, timing.dropSec(), () -> beginTurn(game, nextTurn(seat, alive(game), game.turnCw), true, "timeout"));
     }
 
     /** 원작 shoot user request(12) -> shoot user(13). 실탄 여부는 이때 처음 공개된다 */
@@ -502,8 +548,9 @@ public class MultiGameService {
     }
 
     /**
-     * 원작 interact with item request(22) -> interact with item(23). 쇠톱(이미 잘렸으면 못 씀), 돋보기, 담배(라운드 시작 체력보다 낮을 때만 +1), 맥주.
+     * 원작 interact with item request(22) -> interact with item(23). 쓸 수 있는지는 원작 GetPropertyInvalidItems를 따른다 (itemUsable).
      * 쓰는 동안은 ITEM_USE 단계로 다른 행동을 받지 않고, 연출 시간(ITEM_USE_SEC) 뒤 차례가 이어진다.
+     * 재머·아드레날린은 ITEM_SECONDARY 단계에서 대상/훔칠 아이템을 기다린다 (itemSecondary, 제한 시간 onSecondaryTimeout).
      */
     public synchronized void useItem(long userId, int cell) {
         Game game = gameByUser.get(userId);
@@ -512,28 +559,140 @@ public class MultiGameService {
         int idx = indexOf(game, seat);
         if (idx != game.turnSeat || !seat.alive() || cell < 0 || cell >= SLOTS) return;
         int itemId = seat.cells[cell];
-        if (itemId <= 0 || itemId >= ITEM_USE_SEC.length || ITEM_USE_SEC[itemId] <= 0) return;
-        if (itemId == 1 && game.sawedOff) return;
-        if ((itemId == 2 || itemId == 5) && game.chamber.isEmpty()) return;
+        if (!itemUsable(game, idx, itemId, false)) return;
         seat.cells[cell] = 0;
-        game.phase = Phase.ITEM_USE;
+        applyItem(game, idx, idx, cell, itemId, false);
+    }
+
+    /**
+     * 원작 ChangeGameStateWithItem: 아이템 효과를 적용하고 모두에게 알린다. fromSeat는 아이템이 있던 자리 (아드레날린으로 훔쳤으면 다른 사람).
+     * 쇠톱(다음 사격 피해 2), 돋보기(첫 셸을 쓴 사람만 앎), 담배(+1), 맥주(첫 셸을 빼 모두에게 공개), 대포폰(세 번째 이후 셸 하나를 쓴 사람만 앎),
+     * 인버터(첫 셸을 바꿈, 아무도 모름), 리모컨(턴 방향을 뒤집음), 재머·아드레날린(고르기 단계)
+     */
+    private void applyItem(Game game, int idx, int fromSeat, int cell, int itemId, boolean stolen) {
+        Seat seat = game.seats.get(idx);
         int shell = -1;
+        int phoneIndex = 0;
         switch (itemId) {
             case 1 -> game.sawedOff = true;
             case 2 -> shell = Boolean.TRUE.equals(game.chamber.peekFirst()) ? 1 : 0;
             case 4 -> seat.health = Math.min(STARTING_HEALTH, seat.health + 1);
             case 5 -> shell = Boolean.TRUE.equals(game.chamber.pollFirst()) ? 1 : 0;
+            case BURNER_PHONE -> {
+                phoneIndex = phoneIndex(game.chamber.size(), random);
+                shell = phoneIndex > 0 ? (Boolean.TRUE.equals(new ArrayList<>(game.chamber).get(phoneIndex - 1)) ? 1 : 0) : -1;
+            }
+            case INVERTER -> {
+                Boolean first = game.chamber.pollFirst();
+                if (first != null) game.chamber.addFirst(!first);
+            }
+            case REMOTE -> game.turnCw = !game.turnCw;
             default -> {
             }
         }
+        boolean secondary = itemId == JAMMER || itemId == ADRENALINE;
+        int secondaryToken = ++game.secondaryToken;
+        game.phase = secondary ? Phase.ITEM_SECONDARY : Phase.ITEM_USE;
+        game.secondaryItem = secondary ? itemId : 0;
         int shellsLeft = game.chamber.size();
         int[] health = healths(game);
-        log.info("[multi] item used seat={} cell={} item={} shell={} left={}", idx, cell, itemId, shell, shellsLeft);
+        log.info("[multi] item used seat={} from={} cell={} item={} stolen={} shell={} phone={} left={} cw={}",
+                idx, fromSeat, cell, itemId, stolen, shell, phoneIndex, shellsLeft, game.turnCw);
         for (Seat s : game.seats) {
-            int seen = itemId == 2 && s != seat ? -1 : shell;   // 돋보기로 본 셸은 쓴 사람만 안다
-            packetSender.sendTo(s.userId, PacketType.MULTI_ITEM_USED, new ItemUsed(idx, cell, itemId, seen, shellsLeft, health, game.sawedOff));
+            boolean secret = (itemId == 2 || itemId == BURNER_PHONE) && s != seat;   // 돋보기·대포폰으로 안 셸은 쓴 사람만 안다
+            packetSender.sendTo(s.userId, PacketType.MULTI_ITEM_USED, new ItemUsed(idx, cell, itemId, secret ? -1 : shell, shellsLeft, health, game.sawedOff,
+                    stolen, fromSeat, secret ? 0 : phoneIndex, game.turnCw));
         }
-        later(game, ITEM_USE_SEC[itemId] * timing.itemUseScale(), () -> afterItem(game, idx));
+        if (itemId == JAMMER) later(game, JAMMER_TIMEOUT_SEC * timing.itemUseScale(), () -> onSecondaryTimeout(game, idx, secondaryToken));
+        else if (itemId == ADRENALINE) later(game, (ADRENALINE_DELAY_SEC + ADRENALINE_TIMEOUT_SEC) * timing.itemUseScale(), () -> onSecondaryTimeout(game, idx, secondaryToken));
+        else later(game, (ITEM_USE_SEC[itemId] + (stolen ? STOLEN_EXTRA_SEC : 0)) * timing.itemUseScale(), () -> afterItem(game, idx));
+    }
+
+    /**
+     * 원작 secondary item interaction request(24). 재머: 대상 자리(target)를 다음 차례 한 번 넘기게 한다.
+     * 아드레날린: target 자리 cell의 아이템을 훔쳐 바로 쓴다 (아드레날린은 훔칠 수 없다)
+     */
+    public synchronized void itemSecondary(long userId, int target, int cell) {
+        Game game = gameByUser.get(userId);
+        if (game == null || game.over || game.phase != Phase.ITEM_SECONDARY) return;
+        Seat seat = seat(game, userId);
+        int idx = indexOf(game, seat);
+        if (idx != game.turnSeat || target < 0 || target >= game.seats.size()) return;
+        if (game.secondaryItem == JAMMER) {
+            if (!jamTargetValid(game, idx, target)) return;
+            Seat victim = game.seats.get(target);
+            victim.jammed = true;
+            victim.jamChecked = false;
+            game.secondaryToken++;
+            game.phase = Phase.ITEM_USE;
+            game.secondaryItem = 0;
+            log.info("[multi] jammer seat={} target={}", idx, target);
+            broadcast(game, PacketType.MULTI_ITEM_SECONDARY_DONE, new ItemSecondaryDone(idx, JAMMER, target, false));
+            later(game, JAMMER_RESULT_SEC * timing.itemUseScale(), () -> afterItem(game, idx));
+        } else if (game.secondaryItem == ADRENALINE) {
+            if (cell < 0 || cell >= SLOTS || !stealable(game, idx, target, cell)) return;
+            Seat victim = game.seats.get(target);
+            int itemId = victim.cells[cell];
+            victim.cells[cell] = 0;
+            log.info("[multi] adrenaline seat={} steals item={} from seat={} cell={}", idx, itemId, target, cell);
+            applyItem(game, idx, target, cell, itemId, true);
+        }
+    }
+
+    /** 원작 timeout exceeded(jammer / adrenaline): 고르지 못하고 시간이 지났다. 장치를 내려놓거나 카메라가 돌아오고 차례가 이어진다 */
+    private void onSecondaryTimeout(Game game, int seat, int secondaryToken) {
+        if (game.phase != Phase.ITEM_SECONDARY || game.turnSeat != seat || game.secondaryToken != secondaryToken) return;
+        int itemId = game.secondaryItem;
+        game.secondaryToken++;
+        game.phase = Phase.ITEM_USE;
+        game.secondaryItem = 0;
+        log.info("[multi] secondary timeout seat={} item={}", seat, itemId);
+        broadcast(game, PacketType.MULTI_ITEM_SECONDARY_DONE, new ItemSecondaryDone(seat, itemId, -1, true));
+        double exit = itemId == JAMMER ? JAMMER_TIMEOUT_EXIT_SEC : ADRENALINE_TIMEOUT_EXIT_SEC;
+        later(game, exit * timing.itemUseScale(), () -> afterItem(game, seat));
+    }
+
+    /** 원작 GetPropertyInvalidItems + 서버 확인: user가 지금 itemId를 쓸 수 있는가. stealing이면 아드레날린으로 훔쳐 쓰는 경우 */
+    private static boolean itemUsable(Game game, int user, int itemId, boolean stealing) {
+        return switch (itemId) {
+            case 1 -> !game.sawedOff;
+            case 2, 5, INVERTER -> !game.chamber.isEmpty();
+            case JAMMER -> jamTargetExists(game, user);
+            case 4, BURNER_PHONE, REMOTE -> true;
+            case ADRENALINE -> !stealing && stealableExists(game, user);
+            default -> false;
+        };
+    }
+
+    /** 원작 CheckIfJammerHasEligibleTargets: 살아 있고 아직 재머에 걸리지 않은 다른 사람 */
+    private static boolean jamTargetValid(Game game, int user, int target) {
+        if (target == user || target < 0 || target >= game.seats.size()) return false;
+        Seat s = game.seats.get(target);
+        return s.alive() && !s.jammed;
+    }
+
+    private static boolean jamTargetExists(Game game, int user) {
+        for (int i = 0; i < game.seats.size(); i++) if (jamTargetValid(game, user, i)) return true;
+        return false;
+    }
+
+    /** 아드레날린으로 훔칠 수 있는 아이템: 다른 사람 칸에 있고 아드레날린이 아니며 지금 쓸 수 있는 것 */
+    private static boolean stealable(Game game, int user, int seat, int cell) {
+        if (seat == user || seat < 0 || seat >= game.seats.size()) return false;
+        return itemUsable(game, user, game.seats.get(seat).cells[cell], true);
+    }
+
+    private static boolean stealableExists(Game game, int user) {
+        for (int s = 0; s < game.seats.size(); s++)
+            for (int c = 0; c < SLOTS; c++)
+                if (stealable(game, user, s, c)) return true;
+        return false;
+    }
+
+    /** 원작 GetBurnerPhone_VerbalIndex: 셸이 2개 이하면 -1, 아니면 세 번째부터 끝 중 하나의 순번 (7번째까지) */
+    static int phoneIndex(int shells, Random random) {
+        if (shells <= 2) return -1;
+        return Math.min(2 + random.nextInt(shells - 2) + 1, 7);
     }
 
     /** 원작 EndItemInteraction: 맥주로 셸이 다 떨어졌으면 다음 사람부터 아이템 받기, 쓰는 동안 시간이 다 됐으면 넘기고, 아니면 차례가 이어진다 */
@@ -541,11 +700,11 @@ public class MultiGameService {
         if (game.phase != Phase.ITEM_USE || game.turnSeat != seat) return;
         game.phase = Phase.TURN;
         if (game.chamber.isEmpty()) {
-            game.firstTurnSeat = nextTurn(seat, alive(game));
+            game.firstTurnSeat = nextTurn(seat, alive(game), game.turnCw);
             regrabItems(game);
             return;
         }
-        if (game.turnExpiredDuringItem || !game.seats.get(seat).alive()) beginTurn(game, nextTurn(seat, alive(game)), true, "timeout");
+        if (game.turnExpiredDuringItem || !game.seats.get(seat).alive()) beginTurn(game, nextTurn(seat, alive(game), game.turnCw), true, "timeout");
     }
 
     /** 원작 CheckIfEndingTurn -> MainRoutine_UserEndTurn: 승자가 있으면 라운드 끝, 셸이 비면 아이템 받기, 아니면 다음 차례 */
@@ -555,7 +714,7 @@ public class MultiGameService {
             roundEnd(game, winner);
             return;
         }
-        int next = keepTurn && game.seats.get(shooter).alive() ? shooter : nextTurn(shooter, alive(game));
+        int next = keepTurn && game.seats.get(shooter).alive() ? shooter : nextTurn(shooter, alive(game), game.turnCw);
         if (shellsLeft == 0) {
             game.firstTurnSeat = next;
             regrabItems(game);
@@ -653,9 +812,14 @@ public class MultiGameService {
 
     /** 원작 GetNextTurn_Socket (CW): 자리 번호가 하나 큰 쪽으로, 끝이면 0부터. 나간 자리는 건너뛴다 */
     static int nextTurn(int from, boolean[] connected) {
+        return nextTurn(from, connected, true);
+    }
+
+    /** cw가 false(리모컨으로 CCW)면 자리 번호가 하나 작은 쪽으로 */
+    static int nextTurn(int from, boolean[] connected, boolean cw) {
         int n = connected.length;
         for (int step = 1; step <= n; step++) {
-            int seat = (from + step) % n;
+            int seat = ((from + (cw ? step : -step)) % n + n) % n;
             if (connected[seat]) return seat;
         }
         return from;
