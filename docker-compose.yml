@@ -3,7 +3,7 @@ services:
     image: mysql:8.0
     container_name: buckshot-mysql
     ports:
-      - "3307:3306" # 로컬 MySQL 서비스가 3306을 쓰는 경우를 피한다
+      - "127.0.0.1:3307:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
       MYSQL_DATABASE: buckshot_roulette
@@ -18,7 +18,7 @@ services:
     image: redis:7
     container_name: buckshot-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
 

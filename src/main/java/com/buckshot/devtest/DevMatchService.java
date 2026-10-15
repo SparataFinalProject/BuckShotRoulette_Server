@@ -17,6 +17,7 @@ import com.buckshot.ws.packet.s2c.MatchQueuedPacket;
 import com.buckshot.ws.packet.s2c.RankedGameStartPacket;
 import com.buckshot.ws.session.SessionRegistry;
 import com.buckshot.ws.session.UserDisconnectedEvent;
+import com.buckshot.matchmaking.service.MatchmakingService;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -57,6 +58,7 @@ public class DevMatchService {
     private final PacketSender packetSender;
     private final UserService userService;
     private final SessionRegistry sessionRegistry;
+    private final MatchmakingService matchmakingService;
     private final StreakService streakService;
     private final MultiGameService multiGameService;   // 1대1 게임의 채팅
 
@@ -165,6 +167,11 @@ public class DevMatchService {
         return (skin + 1 + random.nextInt(SKIN_COUNT - 1)) % SKIN_COUNT;
     }
 
+    /** 방에서 시작한 1대1(startPair)이나 연승 모드(startRanked)로 만든 게임이면 true. 정식 GameReadyHandler가 이 게임의 GAME_READY를 ready로 넘긴다 */
+    public synchronized boolean ownsGame(String gameId) {
+        return games.containsKey(gameId) || cancelled.containsKey(gameId);
+    }
+
     public void ready(long userId, String gameId) {
         long[] pair;
         synchronized (this) {
@@ -212,16 +219,130 @@ public class DevMatchService {
         room.begin();
     }
 
+    /**
+     * 정식 바로 매칭에서 두 플레이어가 GAME_READY를 완료했을 때
+     * 기존 DevGameRoom을 사용해 게임을 시작한다.
+     * DevMatchService의 개발용 매칭 대기열은 사용하지 않는다.
+     */
+    public void startFromMatchmaking(
+            String gameId,
+            long playerAId,
+            long playerBId
+    ) {
+        multiGameService.openChat(playerAId, playerBId);   // 1대1 채팅 (startPair와 같다)
+
+        // GAME_START에 필요한 플레이어 정보
+        PlayerState[] players = {
+                state(playerAId),
+                state(playerBId)
+        };
+
+        // 기존 서버 게임 진행 시스템을 그대로 사용
+        DevGameRoom room = new DevGameRoom(
+                packetSender,
+                playerAId,
+                playerBId
+        );
+
+        // DevFireHandler 등의 기존 입력 핸들러가
+        // 해당 플레이어의 게임방을 찾을 수 있도록 등록
+        synchronized (this) {
+            roomByUser.put(playerAId, room);
+            roomByUser.put(playerBId, room);
+        }
+
+        try {
+            GameStartPacket start = new GameStartPacket(
+                    gameId,
+                    MAX_ITEM_SLOTS,
+                    players
+            );
+
+            // 두 클라이언트에 실제 게임 시작 전달
+            packetSender.sendTo(
+                    playerAId,
+                    PacketType.GAME_START,
+                    start
+            );
+
+            packetSender.sendTo(
+                    playerBId,
+                    PacketType.GAME_START,
+                    start
+            );
+
+            log.info(
+                    "[Matchmaking] GAME_START gameId={} players={},{}",
+                    gameId,
+                    playerAId,
+                    playerBId
+            );
+
+            // 기존 게임방의 라운드 및 턴 시작
+            room.begin();
+
+        } catch (RuntimeException e) {
+            // 시작 처리 중 오류가 발생하면 새로 등록한 방 정리
+            synchronized (this) {
+                roomByUser.remove(playerAId, room);
+                roomByUser.remove(playerBId, room);
+            }
+
+            log.error(
+                    "[Matchmaking] 게임 시작 실패 gameId={}",
+                    gameId,
+                    e
+            );
+
+            throw e;
+        }
+    }
+
     @EventListener
     public void onDisconnected(UserDisconnectedEvent event) {
         long userId = event.userId();
         DevGameRoom room;
         synchronized (this) {
-            if (waitingUserId != null && waitingUserId == userId) waitingUserId = null;
+
+            // 기존 개발용 대기열 정리
+            if (waitingUserId != null && waitingUserId == userId) {
+                waitingUserId = null;
+            }
+
             room = roomByUser.remove(userId);
+
+            // 연결 종료된 플레이어가 게임 중이었다면
+            // 같은 게임방을 참조하는 상대 플레이어의 참조도 정리
+            if (room != null) {
+                roomByUser.entrySet().removeIf(
+                        entry -> entry.getValue() == room
+                );
+            }
         }
-        cancelPending(userId, MatchCancelReason.OPPONENT_DISCONNECTED);   // 준비 중(아직 GAME_START 전)에 나가면 상대는 매칭 취소
-        if (room != null) room.disconnect(userId);   // 게임 중이면 남은 쪽 승리, 이미 끝난 방이면 무시된다
+
+        try {
+            // 기존 개발용 준비 중 매칭 정리
+            cancelPending(
+                    userId,
+                    MatchCancelReason.OPPONENT_DISCONNECTED
+            );
+
+            // 기존 게임 중 연결 종료 처리
+            // 상대에게 GAME_OVER(DISCONNECT) 전송
+            if (room != null) {
+                room.disconnect(userId);
+            }
+
+        } finally {
+
+            // 정식 매칭에서 시작한 게임의 매칭 상태 정리
+            matchmakingService.clearStartedMatchOnDisconnect(userId);
+
+            log.info(
+                    "[Matchmaking] disconnected user cleanup userId={}",
+                    userId
+            );
+        }
     }
 
     /**
@@ -243,6 +364,7 @@ public class DevMatchService {
                 if (pending && (pair[0] == userId || pair[1] == userId)) {
                     cancelTo = pair[0] == userId ? pair[1] : pair[0];
                     ready.remove(game.getKey());
+                    rankedGames.remove(game.getKey());
                     cancelled.put(game.getKey(), reason);
                     it.remove();
                 }
