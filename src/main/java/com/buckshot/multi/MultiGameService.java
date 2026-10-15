@@ -52,7 +52,7 @@ public class MultiGameService {
 
     static final int SLOTS = 8;
     static final int STARTING_HEALTH = 4;
-    static final int ITEM_TIMEOUT_SEC = 22;         // 원작 MAIN_timeout_duration_item_distribution은 30초. 테스트용 (사용자 요청으로 12 -> 22, 나중에 줄인다)
+    static final int ITEM_TIMEOUT_SEC = 30;         // 원작 MAIN_timeout_duration_item_distribution
     static final int FIXED_ITEM_COUNT = 4;          // 이번 라운드 모두가 받을 개수 (0이면 원작 규칙의 무작위: 3인 3~5, 4인 3~4). 무작위여도 한 번만 정해 모두 같다
     static final int LOAD_DELAY_SEC = 2;            // 모두 아이템 받기를 끝내고 장전이 시작하기까지 (원작 2초)
     static final int READY_TIMEOUT_SEC = 20;
@@ -76,7 +76,7 @@ public class MultiGameService {
          * itemUseScale: ITEM_USE_SEC와 재머·아드레날린 고르기 시간에 곱한다 (원작 1)
          * remover 3.5: 지난 라운드 아이템이 남아 있으면 원작 ClearUserInventories(아이템 수거기)가 끝나기를 기다리는 시간
          */
-        static final Timing ORIGINAL = new Timing(8.5, 1.1, 30, 21, 3.8, 1.0, 9.3, 6.0, 1.0, 3.5);
+        static final Timing ORIGINAL = new Timing(8.5, 1.1, 20, 21, 3.8, 1.0, 9.3, 6.0, 1.0, 3.5);
     }
 
     enum Phase {
