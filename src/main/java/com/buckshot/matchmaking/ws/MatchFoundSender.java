@@ -20,6 +20,20 @@ public class MatchFoundSender {
     private final PacketSender packetSender;
     private final UserService userService;
 
+    // 랭크 매칭: 대기열 등록 + MATCH_QUEUED 전송과 (스케줄러의) 짝 찾기 + MATCH_FOUND 전송이 서로 끼어들지 않게 하는 잠금
+    private final Object rankedOrderLock = new Object();
+
+    /**
+     * action을 랭크 매칭 순서 잠금 안에서 실행한다.
+     * 새로 들어온 사람이 대기열에 등록된 직후 스케줄러가 짝을 찾아 MATCH_FOUND를 먼저 보내면
+     * 클라이언트는 MATCH_QUEUED보다 MATCH_FOUND를 먼저 받게 된다. 둘이 같은 잠금을 쓰면 그럴 수 없다.
+     */
+    public void runInRankedOrder(Runnable action) {
+        synchronized (rankedOrderLock) {
+            action.run();
+        }
+    }
+
     public void send(MatchmakingService.MatchResult match) {
         PlayerProfile playerA =
                 getPlayerProfile(match.playerAId());
