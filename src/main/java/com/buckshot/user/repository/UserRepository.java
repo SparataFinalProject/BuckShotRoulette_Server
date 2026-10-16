@@ -1,11 +1,14 @@
 package com.buckshot.user.repository;
 
 import com.buckshot.user.entity.User;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,6 +17,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByGuestKeyHash(String guestKeyHash);
 
     boolean existsByNickname(String nickname);
+
+    /**
+     * 레이팅을 바꿀 두 사람을 잠그고 읽는다 (동시에 끝난 판끼리 점수가 덮어써지지 않게).
+     * id 순으로 읽어 두 판이 서로를 기다리는 교착을 피한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from User u where u.id in :ids order by u.id asc")
+    List<User> findAllByIdForUpdate(@Param("ids") Collection<Long> ids);
 
     /**
      * 레이팅 상위 50명. 같으면 먼저 가입한 사람(id 작은 쪽)이 위.

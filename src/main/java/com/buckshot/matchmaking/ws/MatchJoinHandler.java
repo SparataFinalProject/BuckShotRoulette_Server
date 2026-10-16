@@ -1,15 +1,12 @@
 package com.buckshot.matchmaking.ws;
 
 import com.buckshot.matchmaking.service.MatchmakingService;
-import com.buckshot.user.dto.PlayerProfileResponse;
 import com.buckshot.user.service.UserService;
 import com.buckshot.ws.PacketHandler;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.WsContext;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.packet.c2s.MatchJoinPacket;
-import com.buckshot.ws.packet.dto.PlayerProfile;
-import com.buckshot.ws.packet.s2c.MatchFoundPacket;
 import com.buckshot.ws.packet.s2c.MatchQueuedPacket;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +21,7 @@ public class MatchJoinHandler
     private final MatchmakingService matchmakingService;
     private final PacketSender packetSender;
     private final UserService userService;
+    private final MatchFoundSender matchFoundSender;
 
     @Override
     public String type() {
@@ -42,8 +40,18 @@ public class MatchJoinHandler
     ) {
         long userId = ctx.userId();
 
-        MatchmakingService.JoinResult result =
-                matchmakingService.join(userId);
+        boolean ranked = data != null && data.ranked();
+
+        MatchmakingService.JoinResult result;
+
+        if (ranked) {
+            long now = System.currentTimeMillis();
+            int rating = userService.getProfile(userId).rating();
+
+            result = matchmakingService.joinRanked(userId, rating, now);
+        } else {
+            result = matchmakingService.join(userId);
+        }
 
         // MATCH_JOIN을 보낸 사용자는 우선
         // MATCH_QUEUED를 받는다.
@@ -58,68 +66,25 @@ public class MatchJoinHandler
         );
 
         log.info(
-                "match queued userId={} queuedAt={}",
+                "match queued userId={} queuedAt={} ranked={}",
                 userId,
-                result.queuedAt()
+                result.queuedAt(),
+                ranked
         );
+
+        if (ranked) {
+            // 방금 들어온 사람과 짝이 될 상대가 이미 기다리고 있을 수 있다.
+            // 그 뒤로는 MatchmakingTimeoutScheduler가 주기적으로 짝을 찾는다.
+            matchmakingService
+                    .matchRanked(System.currentTimeMillis())
+                    .forEach(matchFoundSender::send);
+            return;
+        }
 
         if (!result.matched()) {
             return;
         }
 
-        sendMatchFound(result.match());
-    }
-
-    private void sendMatchFound(
-            MatchmakingService.MatchResult match
-    ) {
-        PlayerProfile playerA =
-                getPlayerProfile(match.playerAId());
-
-        PlayerProfile playerB =
-                getPlayerProfile(match.playerBId());
-
-        packetSender.sendTo(
-                match.playerAId(),
-                PacketType.MATCH_FOUND,
-                new MatchFoundPacket(
-                        match.gameId(),
-                        playerB,
-                        match.readyTimeoutSec(),
-                        -1 // 임시
-                )
-        );
-
-        packetSender.sendTo(
-                match.playerBId(),
-                PacketType.MATCH_FOUND,
-                new MatchFoundPacket(
-                        match.gameId(),
-                        playerA,
-                        match.readyTimeoutSec(),
-                        -1 // 임시
-                )
-        );
-
-        log.info(
-                "match found gameId={} playerA={} playerB={}",
-                match.gameId(),
-                match.playerAId(),
-                match.playerBId()
-        );
-    }
-
-    private PlayerProfile getPlayerProfile(long userId) {
-        PlayerProfileResponse profile =
-                userService.getProfile(userId);
-
-        return new PlayerProfile(
-                profile.userId(),
-                profile.nickname(),
-                profile.wins(),
-                profile.losses(),
-                profile.rating(),
-                profile.tier()
-        );
+        matchFoundSender.send(result.match());
     }
 }

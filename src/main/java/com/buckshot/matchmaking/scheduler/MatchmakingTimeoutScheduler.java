@@ -1,6 +1,7 @@
 package com.buckshot.matchmaking.scheduler;
 
 import com.buckshot.matchmaking.service.MatchmakingService;
+import com.buckshot.matchmaking.ws.MatchFoundSender;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.packet.s2c.MatchCancelledPacket;
@@ -19,6 +20,15 @@ public class MatchmakingTimeoutScheduler {
 
     private final MatchmakingService matchmakingService;
     private final PacketSender packetSender;
+    private final MatchFoundSender matchFoundSender;
+
+    // 랭크 매칭은 기다릴수록 허용 레이팅 차이가 넓어지므로 새로 들어오는 사람이 없어도 1초마다 짝을 찾는다
+    @Scheduled(fixedDelay = 1000)
+    public void matchRankedUsers() {
+        matchmakingService
+                .matchRanked(System.currentTimeMillis())
+                .forEach(matchFoundSender::send);
+    }
 
     @Scheduled(fixedDelay = 1000)
     public void cancelTimedOutUsers() {

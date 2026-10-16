@@ -1,6 +1,8 @@
 package com.buckshot.devtest;
 
+import com.buckshot.matchmaking.RankedMatchGame;
 import com.buckshot.multi.MultiGameService;
+import com.buckshot.rating.RatingService;
 import com.buckshot.streak.service.StreakService;
 import com.buckshot.user.dto.PlayerProfileResponse;
 import com.buckshot.user.service.UserService;
@@ -61,6 +63,7 @@ public class DevMatchService {
     private final MatchmakingService matchmakingService;
     private final StreakService streakService;
     private final MultiGameService multiGameService;   // 1대1 게임의 채팅
+    private final RatingService ratingService;         // 랭크 매칭 결과의 Elo 반영
 
     private Long waitingUserId;
     private int waitingSkin;   // 기다리는 사람 화면에 미리 보여 준 상대 마스크 = 나중에 들어오는 사람의 마스크
@@ -229,6 +232,18 @@ public class DevMatchService {
             long playerAId,
             long playerBId
     ) {
+        startFromMatchmaking(gameId, playerAId, playerBId, false);
+    }
+
+    /**
+     * ranked가 true면 랭크 매칭: 진행은 같고, 판이 끝나면 Elo로 레이팅과 승패를 반영한다.
+     */
+    public void startFromMatchmaking(
+            String gameId,
+            long playerAId,
+            long playerBId,
+            boolean ranked
+    ) {
         multiGameService.openChat(playerAId, playerBId);   // 1대1 채팅 (startPair와 같다)
 
         // GAME_START에 필요한 플레이어 정보
@@ -238,11 +253,10 @@ public class DevMatchService {
         };
 
         // 기존 서버 게임 진행 시스템을 그대로 사용
-        DevGameRoom room = new DevGameRoom(
-                packetSender,
-                playerAId,
-                playerBId
-        );
+        DevGameRoom room = ranked
+                ? new DevGameRoom(packetSender, playerAId, playerBId,
+                        new RankedMatchGame(playerAId, playerBId, ratingService))
+                : new DevGameRoom(packetSender, playerAId, playerBId);
 
         // DevFireHandler 등의 기존 입력 핸들러가
         // 해당 플레이어의 게임방을 찾을 수 있도록 등록
