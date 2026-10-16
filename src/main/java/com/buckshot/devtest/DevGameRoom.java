@@ -24,9 +24,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -56,10 +58,11 @@ public class DevGameRoom {
             ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE };
     // 상한 약: 이 확률로 체력 +2(최대 체력까지), 아니면 -1 (원작 Double or Nothing)
     private static final double MEDICINE_SUCCESS_CHANCE = 0.4;
-    // 아이템을 다 놓을 때까지 기다리는 시간 (ITEMS_GRANTED를 보낸 때부터. 클라는 받기 전에 탄피 치우기·수갑 풀기·카메라 이동을 먼저 한다).
-    // 마지막 탄을 쏜 직후에 보내므로 클라는 그 사격 연출(딜러가 맞으면 밀려났다 돌아오기까지)도 먼저 끝내야 해서 상자가 열리기까지 10초 가까이 걸린다.
-    // 25초였을 때 연승 모드에서 상자를 연 뒤 배치하다 시간이 끝나는 일이 있어 10초를 더한다
-    private static final int PLACE_TIME_LIMIT_SEC = 35;
+    // 아이템을 다 놓을 때까지 기다리는 시간. 클라가 상자를 열고 PLACE_READY를 보낸 때부터 사람마다 따로 센다.
+    // (서버는 마지막 탄을 쏜 직후 지급하지만 클라는 밀린 연출 - 연승 모드의 딜러 연속 행동 등 - 을 다 본 뒤에야 상자를 연다)
+    private static final int PLACE_TIME_LIMIT_SEC = 25;
+    // PLACE_READY가 끝내 오지 않을 때(옛 클라 등) 지급한 때부터 기다리는 최대 시간. 지나면 남은 아이템을 모두 대신 놓는다
+    private static final int PLACE_FALLBACK_SEC = 120;
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "dev-place-timer");
         t.setDaemon(true);
@@ -84,6 +87,7 @@ public class DevGameRoom {
     private final Map<Long, Integer> placedCount = new HashMap<>();
     private boolean placing;
     private int placingId;          // 지난 배치의 타이머가 늦게 실행돼도 무시하려고
+    private final Set<Long> placeReady = new HashSet<>();   // 이번 배치에서 상자를 열었다고 알린 사람 (타이머를 한 번만 건다)
     private long nextFirstTurn;     // 배치가 끝나면 시작할 턴
     private long turnUserId;
     private int round;
@@ -271,6 +275,13 @@ public class DevGameRoom {
         if (allPlaced()) finishPlacing();
     }
 
+    /** PLACE_READY: 클라가 상자를 열었다. 이때부터 이 사람의 배치 제한 시간을 센다 (배치마다 한 번만). */
+    public synchronized void placeReady(long userId) {
+        if (over || !placing || !toPlace.containsKey(userId) || !placeReady.add(userId)) return;
+        int id = placingId;
+        TIMER.schedule(() -> placeTimeoutFor(userId, id), PLACE_TIME_LIMIT_SEC, TimeUnit.SECONDS);
+    }
+
     /** 사람이 아닌 자리(딜러)의 남은 아이템을 앞쪽 빈 칸부터 한꺼번에 놓는다. 상대에게 ITEM_PLACED로 알린다. */
     public synchronized void placeAllFor(long userId) {
         Deque<String> remaining = toPlace.get(userId);
@@ -327,6 +338,7 @@ public class DevGameRoom {
         turnUserId = 0;   // 배치 중에는 누구의 턴도 아니다 (발사·아이템 사용 거절)
         placing = true;
         placingId++;
+        placeReady.clear();
         nextFirstTurn = firstTurnUser;
         for (long id : users) grant(id, count);
         listener.placingStarted();
@@ -336,19 +348,35 @@ public class DevGameRoom {
             return;
         }
         int id = placingId;
-        TIMER.schedule(() -> placeTimeout(id), PLACE_TIME_LIMIT_SEC, TimeUnit.SECONDS);
+        TIMER.schedule(() -> placeTimeout(id), PLACE_FALLBACK_SEC, TimeUnit.SECONDS);   // 제한 시간 본체는 PLACE_READY부터 (placeReady)
     }
 
-    // 제한 시간: 남은 아이템을 앞쪽 빈 칸부터 놓고 둘 다에게 알린 뒤 장전으로 넘어간다
+    // 예비 제한 시간 (PLACE_READY가 안 온 사람까지): 남은 아이템을 모두 앞쪽 빈 칸부터 놓고 장전으로 넘어간다
     private synchronized void placeTimeout(int id) {
         if (over || !placing || id != placingId) return;
-        for (long userId : users) {
-            String[] slots = items.get(userId);
-            for (int s = 0; s < SLOT_COUNT && !toPlace.get(userId).isEmpty(); s++)
-                if (slots[s] == null) place(userId, s, true);
-        }
-        log.info("[dev] place timeout room={}", users[0] + "v" + users[1]);
+        for (long userId : users) autoPlace(userId);
+        log.info("[dev] place fallback timeout room={}", users[0] + "v" + users[1]);
         finishPlacing();
+    }
+
+    // 한 사람의 제한 시간 (PLACE_READY부터): 그 사람의 남은 아이템을 앞쪽 빈 칸부터 놓고 둘 다에게 알린다. 다 놓였으면 장전으로
+    synchronized void placeTimeoutFor(long userId, int id) {
+        if (over || !placing || id != placingId) return;
+        if (toPlace.get(userId).isEmpty()) return;
+        autoPlace(userId);
+        log.info("[dev] place timeout user={} room={}", userId, users[0] + "v" + users[1]);
+        if (allPlaced()) finishPlacing();
+    }
+
+    private void autoPlace(long userId) {
+        String[] slots = items.get(userId);
+        for (int s = 0; s < SLOT_COUNT && !toPlace.get(userId).isEmpty(); s++)
+            if (slots[s] == null) place(userId, s, true);
+    }
+
+    /** 테스트용: 지금 배치 번호 (placeTimeoutFor에 넘긴다) */
+    synchronized int placingId() {
+        return placingId;
     }
 
     private void place(long userId, int slot, boolean auto) {
