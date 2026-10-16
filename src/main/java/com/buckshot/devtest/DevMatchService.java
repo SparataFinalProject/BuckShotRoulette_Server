@@ -7,6 +7,7 @@ import com.buckshot.user.service.UserService;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.MatchCancelReason;
 import com.buckshot.ws.packet.PacketType;
+import com.buckshot.ws.packet.c2s.TestOptions;
 import com.buckshot.ws.packet.dto.ItemSlot;
 import com.buckshot.ws.packet.dto.PlayerProfile;
 import com.buckshot.ws.packet.dto.PlayerState;
@@ -72,6 +73,7 @@ public class DevMatchService {
     private final Map<String, String> cancelled = new HashMap<>();
     private final Map<Long, DevGameRoom> roomByUser = new HashMap<>();   // 새 게임이 시작되면 덮어쓴다
     private final Set<String> rankedGames = new HashSet<>();   // 연승 모드(딜러 상대) 게임 id
+    private final Map<Long, TestOptions> testOptions = new HashMap<>();   // GAME_READY에 실려 온 개발용 테스트 옵션 (방을 만들 때 쓰고 지운다)
 
     // 먼저 기다리는 사람: 상대 마스크를 3개 중 무작위로 정해 MATCH_QUEUED로 알려 준다 (기다리는 동안 그 마스크를 보여 줌).
     // 나중에 들어온 사람: 그 마스크가 자기 마스크가 되고, 기다리던 사람의 마스크는 나머지 두 개 중에서 무작위로 정한다
@@ -172,6 +174,19 @@ public class DevMatchService {
         return games.containsKey(gameId) || cancelled.containsKey(gameId);
     }
 
+    /** GAME_READY에 실려 온 개발용 테스트 옵션을 기억한다 (켜져 있을 때만). 두 플레이어 중 하나라도 보내면 그 게임의 방에 적용된다 */
+    public synchronized void rememberTestOptions(long userId, TestOptions options) {
+        if (options != null && options.enabled()) testOptions.put(userId, options);
+        else testOptions.remove(userId);
+    }
+
+    // 방을 만들 때 두 플레이어가 보낸 테스트 옵션 중 켜진 것을 하나 꺼낸다 (없으면 null). 다음 게임에 남지 않게 둘 다 지운다
+    private synchronized TestOptions takeTestOptions(long a, long b) {
+        TestOptions mine = testOptions.remove(a);
+        TestOptions other = testOptions.remove(b);
+        return mine != null ? mine : other;
+    }
+
     public void ready(long userId, String gameId) {
         long[] pair;
         synchronized (this) {
@@ -212,6 +227,7 @@ public class DevMatchService {
             streakGame.attach(room);
         } else {
             room = new DevGameRoom(packetSender, pair[0], pair[1]);
+            room.testOptions(takeTestOptions(pair[0], pair[1]));
         }
         synchronized (this) {
             for (long id : pair) if (id != DevStreakGame.DEALER_ID) roomByUser.put(id, room);   // 딜러 자리는 여러 방이 함께 쓴다
@@ -243,6 +259,7 @@ public class DevMatchService {
                 playerAId,
                 playerBId
         );
+        room.testOptions(takeTestOptions(playerAId, playerBId));
 
         // DevFireHandler 등의 기존 입력 핸들러가
         // 해당 플레이어의 게임방을 찾을 수 있도록 등록

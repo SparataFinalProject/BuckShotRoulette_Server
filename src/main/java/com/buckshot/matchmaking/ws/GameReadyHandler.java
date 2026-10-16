@@ -46,6 +46,7 @@ public class GameReadyHandler
         }
 
         long userId = ctx.userId();
+        devMatchService.rememberTestOptions(userId, data.test());   // 개발용 테스트 옵션 (아이템 고정, 첫 턴 아이템). 방을 만들 때 쓴다
 
         // 방에서 시작한 1대1, 연승 모드 게임은 DevMatchService가 만든 게임이라 그쪽에서 준비를 받는다
         if (devMatchService.ownsGame(data.gameId())) {
