@@ -63,7 +63,7 @@ class DevStreakGameTest {
         assertEquals(3, summary.shots());
         assertEquals(2, summary.correctShots());
         assertEquals(3, summary.damageTaken());
-        assertEquals(GameRules.MAX_HP, summary.hpLeft());     // 방의 체력은 그대로 (begin 안 함)
+        assertEquals(GameRules.STREAK_HP, summary.hpLeft());     // 방의 체력은 그대로 (begin 안 함)
         assertEquals(1, summary.itemUsage().get(Item.BEER));
         assertEquals(null, summary.itemUsage().get(Item.SAW));
 

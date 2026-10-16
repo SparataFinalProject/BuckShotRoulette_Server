@@ -1,5 +1,6 @@
 package com.buckshot.devtest;
 
+import com.buckshot.game.GameRules;
 import com.buckshot.matchmaking.RankedMatchGame;
 import com.buckshot.multi.MultiGameService;
 import com.buckshot.rating.RatingService;
@@ -200,7 +201,8 @@ public class DevMatchService {
         synchronized (this) {
             ranked = rankedGames.remove(gameId);
         }
-        var players = new PlayerState[] { state(pair[0]), state(pair[1]) };
+        int startHp = ranked ? GameRules.STREAK_HP : HP;   // 연승 모드는 원작 싱글 2라운드처럼 목숨 4 (DevStreakGame.maxHp와 같다)
+        var players = new PlayerState[] { state(pair[0], startHp), state(pair[1], startHp) };
         Object start = ranked
                 ? new RankedGameStartPacket(gameId, MAX_ITEM_SLOTS, players, DevStreakGame.MODE, streakService.currentStreak(pair[0]))
                 : new GameStartPacket(gameId, MAX_ITEM_SLOTS, players);
@@ -248,8 +250,8 @@ public class DevMatchService {
 
         // GAME_START에 필요한 플레이어 정보
         PlayerState[] players = {
-                state(playerAId),
-                state(playerBId)
+                state(playerAId, HP),
+                state(playerBId, HP)
         };
 
         // 기존 서버 게임 진행 시스템을 그대로 사용
@@ -426,8 +428,8 @@ public class DevMatchService {
         return new PlayerProfile(p.userId(), p.nickname(), p.wins(), p.losses(), p.rating(), p.tier());
     }
 
-    private PlayerState state(long userId) {
-        if (userId == DevStreakGame.DEALER_ID) return new PlayerState(userId, "딜러", HP, HP, new ItemSlot[0], 0);
-        return new PlayerState(userId, userService.getProfile(userId).nickname(), HP, HP, new ItemSlot[0], 0);
+    private PlayerState state(long userId, int hp) {
+        if (userId == DevStreakGame.DEALER_ID) return new PlayerState(userId, "딜러", hp, hp, new ItemSlot[0], 0);
+        return new PlayerState(userId, userService.getProfile(userId).nickname(), hp, hp, new ItemSlot[0], 0);
     }
 }

@@ -56,8 +56,10 @@ public class DevGameRoom {
             ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE };
     // 상한 약: 이 확률로 체력 +2(최대 체력까지), 아니면 -1 (원작 Double or Nothing)
     private static final double MEDICINE_SUCCESS_CHANCE = 0.4;
-    // 아이템을 다 놓을 때까지 기다리는 시간 (ITEMS_GRANTED를 보낸 때부터. 클라는 받기 전에 탄피 치우기·수갑 풀기·카메라 이동을 먼저 한다)
-    private static final int PLACE_TIME_LIMIT_SEC = 25;
+    // 아이템을 다 놓을 때까지 기다리는 시간 (ITEMS_GRANTED를 보낸 때부터. 클라는 받기 전에 탄피 치우기·수갑 풀기·카메라 이동을 먼저 한다).
+    // 마지막 탄을 쏜 직후에 보내므로 클라는 그 사격 연출(딜러가 맞으면 밀려났다 돌아오기까지)도 먼저 끝내야 해서 상자가 열리기까지 10초 가까이 걸린다.
+    // 25초였을 때 연승 모드에서 상자를 연 뒤 배치하다 시간이 끝나는 일이 있어 10초를 더한다
+    private static final int PLACE_TIME_LIMIT_SEC = 35;
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "dev-place-timer");
         t.setDaemon(true);
@@ -68,6 +70,7 @@ public class DevGameRoom {
     private final Listener listener;
     private final long[] users;
     private final Random random;
+    private final int maxHp;   // 시작 hp이자 최대 hp (Listener.maxHp: 1대1은 HP, 연승 모드는 GameRules.STREAK_HP)
 
     private final Deque<String> shells = new ArrayDeque<>();   // 앞이 약실
     private final Map<Long, Integer> hp = new HashMap<>();
@@ -101,9 +104,10 @@ public class DevGameRoom {
         this.sender = sender;
         this.random = random;
         this.listener = listener;
+        this.maxHp = listener.maxHp();
         this.users = new long[] { userA, userB };
         for (long id : users) {
-            hp.put(id, HP);
+            hp.put(id, maxHp);
             items.put(id, new String[SLOT_COUNT]);
             cuffed.put(id, false);
             cuffSkipped.put(id, false);
@@ -204,7 +208,7 @@ public class DevGameRoom {
                 sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, revealedShell, 0));
             }
             case ItemType.CIGARETTE -> {
-                myHp = Math.min(HP, myHp + 1);
+                myHp = Math.min(maxHp, myHp + 1);
                 hp.put(userId, myHp);
             }
             case ItemType.SAW -> sawed = true;
@@ -221,7 +225,7 @@ public class DevGameRoom {
                 shells.addFirst(ShellType.LIVE.equals(chambered) ? ShellType.BLANK : ShellType.LIVE);
             }
             case ItemType.EXPIRED_MEDICINE -> {
-                myHp = random.nextDouble() < MEDICINE_SUCCESS_CHANCE ? Math.min(HP, myHp + 2) : myHp - 1;
+                myHp = random.nextDouble() < MEDICINE_SUCCESS_CHANCE ? Math.min(maxHp, myHp + 2) : myHp - 1;
                 hp.put(userId, myHp);
             }
             case ItemType.BURNER_PHONE -> {
@@ -318,7 +322,7 @@ public class DevGameRoom {
             return;
         }
 
-        int count = GameRules.itemsPerGrant(grantCount);
+        int count = listener.itemsPerGrant(grantCount, random);
         grantCount++;
         turnUserId = 0;   // 배치 중에는 누구의 턴도 아니다 (발사·아이템 사용 거절)
         placing = true;
@@ -367,8 +371,8 @@ public class DevGameRoom {
     }
 
     private void loadShells(long firstTurnUser) {
-        // 메인게임과 같은 고정 장전표 (GameRules, 탄이 꽂히는 순서만 무작위)
-        int[] composition = GameRules.shellComposition(round);
+        // 고정 장전표 (Listener.shellComposition: 1대1은 메인게임과 같은 GameRules, 연승 모드는 원작 싱글 2라운드. 탄이 꽂히는 순서만 무작위)
+        int[] composition = listener.shellComposition(round);
         int blank = composition[0];
         int live = composition[1];
         List<String> list = new ArrayList<>();
@@ -468,6 +472,15 @@ public class DevGameRoom {
 
         /** 새 아이템(인버터·상한 약·대포폰)도 지급할지. 기본은 원작 5종만 (연승 모드의 딜러 판단·기록이 새 아이템을 아직 모름) */
         default boolean newItems() { return false; }
+
+        /** 시작 hp이자 최대 hp (담배·상한 약으로도 이 위로는 회복되지 않는다) */
+        default int maxHp() { return HP; }
+
+        /** loadIndex번째(0부터) 장전의 {공포탄 수, 실탄 수} */
+        default int[] shellComposition(int loadIndex) { return GameRules.shellComposition(loadIndex); }
+
+        /** grantIndex번째(0부터) 지급에 각자에게 주는 아이템 개수 */
+        default int itemsPerGrant(int grantIndex, Random random) { return GameRules.itemsPerGrant(grantIndex); }
 
         /** 장전 직후 (실탄·공포탄 개수는 둘 다 아는 정보). */
         default void roundStarted(int live, int blank) { }

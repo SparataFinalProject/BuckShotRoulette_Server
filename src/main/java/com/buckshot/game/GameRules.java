@@ -30,7 +30,28 @@ public final class GameRules {
      */
     private static final int[] ITEMS_BY_GRANT = { 2, 3, 4 };
 
+    /** 연승 모드(딜러전)의 시작 hp이자 최대 hp (원작 싱글 2라운드 startingHealth 4) */
+    public static final int STREAK_HP = 4;
+    /**
+     * 연승 모드 장전 순서 {공포탄, 실탄}: 원작 싱글 2라운드(round batch_1)의 roundArray 그대로.
+     * 마지막 구성은 이후 계속 반복된다 (원작 StartRound가 마지막 라운드에서 멈춤)
+     */
+    private static final int[][] STREAK_LOAD_SCHEDULE = { { 1, 1 }, { 2, 2 }, { 2, 3 }, { 3, 3 }, { 2, 5 } };
+    /** 연승 모드 아이템 지급 개수: 매번 3~4개 중 무작위 */
+    private static final int STREAK_ITEMS_MIN = 3;
+    private static final int STREAK_ITEMS_MAX = 4;
+
     private GameRules() {
+    }
+
+    /** 연승 모드: loadIndex번째(0부터) 장전의 {공포탄 수, 실탄 수} */
+    public static int[] streakShellComposition(int loadIndex) {
+        return STREAK_LOAD_SCHEDULE[Math.min(loadIndex, STREAK_LOAD_SCHEDULE.length - 1)].clone();
+    }
+
+    /** 연승 모드: 이번 지급에 각자에게 주는 아이템 개수 (3~4개 무작위) */
+    public static int streakItemsPerGrant(java.util.Random random) {
+        return STREAK_ITEMS_MIN + random.nextInt(STREAK_ITEMS_MAX - STREAK_ITEMS_MIN + 1);
     }
 
     /**
