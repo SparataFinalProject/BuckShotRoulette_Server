@@ -44,6 +44,27 @@ class RankedMatchGameTest {
     }
 
     @Test
+    @DisplayName("보상 서비스가 있으면 GAME_OVER에 승자·패자가 받은 경험치와 돈이 담긴다")
+    void gameOverCarriesRewards() {
+        var rewards = mock(com.buckshot.reward.RewardService.class);
+        var game = new RankedMatchGame(10L, 20L, ratingService, rewards);
+        game.turnStarted(10L, 8, 0L);   // 8턴 진행
+        when(ratingService.applyResult(20L, 10L)).thenReturn(new RatingService.RatedResult(
+                new RatingService.Change(20L, 3, 1, 16, 1016),
+                new RatingService.Change(10L, 1, 4, -16, 984)));
+
+        GameOverPacket packet = (GameOverPacket) game.gameOver(20L, GameOverReason.HP_ZERO);
+
+        assertEquals(2, packet.rewards().length);
+        assertEquals(20L, packet.rewards()[0].userId());
+        assertEquals(20, packet.rewards()[0].expGained());
+        assertEquals(com.buckshot.reward.OneOnOneRewards.WIN_CASH, packet.rewards()[0].moneyGained());
+        assertEquals(10L, packet.rewards()[1].userId());
+        assertEquals(5, packet.rewards()[1].expGained());
+        assertEquals(0, packet.rewards()[1].moneyGained());
+    }
+
+    @Test
     @DisplayName("나간 사람은 진 것으로 센다 (DISCONNECT)")
     void disconnectCountsAsLoss() {
         when(ratingService.applyResult(10L, 20L)).thenReturn(new RatingService.RatedResult(

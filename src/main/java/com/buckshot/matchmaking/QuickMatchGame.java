@@ -5,6 +5,7 @@ import com.buckshot.reward.OneOnOneRewards;
 import com.buckshot.reward.RewardService;
 import com.buckshot.ws.packet.GameOverReason;
 import com.buckshot.ws.packet.dto.PlayerResult;
+import com.buckshot.ws.packet.dto.PlayerReward;
 import com.buckshot.ws.packet.s2c.GameOverPacket;
 import lombok.RequiredArgsConstructor;
 
@@ -34,7 +35,7 @@ public class QuickMatchGame implements DevGameRoom.Listener {
     @Override
     public Object gameOver(long winnerId, String reason) {
         long loserId = winnerId == playerAId ? playerBId : playerAId;
-        OneOnOneRewards.grant(rewardService, winnerId, loserId, turns, GameOverReason.DISCONNECT.equals(reason));
-        return new GameOverPacket(winnerId, reason, new PlayerResult[0], false);
+        PlayerReward[] rewards = OneOnOneRewards.grant(rewardService, winnerId, loserId, turns, GameOverReason.DISCONNECT.equals(reason));
+        return new GameOverPacket(winnerId, reason, new PlayerResult[0], false, rewards);
     }
 }

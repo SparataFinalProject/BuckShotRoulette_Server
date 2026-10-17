@@ -6,6 +6,7 @@ import com.buckshot.reward.OneOnOneRewards;
 import com.buckshot.reward.RewardService;
 import com.buckshot.ws.packet.GameOverReason;
 import com.buckshot.ws.packet.dto.PlayerResult;
+import com.buckshot.ws.packet.dto.PlayerReward;
 import com.buckshot.ws.packet.s2c.GameOverPacket;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,17 +43,17 @@ public class RankedMatchGame implements DevGameRoom.Listener {
     @Override
     public Object gameOver(long winnerId, String reason) {
         long loserId = winnerId == playerAId ? playerBId : playerAId;
-        OneOnOneRewards.grant(rewardService, winnerId, loserId, turns, GameOverReason.DISCONNECT.equals(reason));
+        PlayerReward[] rewards = OneOnOneRewards.grant(rewardService, winnerId, loserId, turns, GameOverReason.DISCONNECT.equals(reason));
         try {
             RatingService.RatedResult r = ratingService.applyResult(winnerId, loserId);
             log.info("[rank] game over winner={} rating={} delta={} loser={} rating={} delta={} reason={}",
                     winnerId, r.winner().rating(), r.winner().ratingDelta(),
                     loserId, r.loser().rating(), r.loser().ratingDelta(), reason);
             return new GameOverPacket(winnerId, reason,
-                    new PlayerResult[] { result(r.winner()), result(r.loser()) }, true);
+                    new PlayerResult[] { result(r.winner()), result(r.loser()) }, true, rewards);
         } catch (RuntimeException e) {
             log.warn("[rank] rating update failed winner={} loser={}: {}", winnerId, loserId, e.getMessage(), e);
-            return new GameOverPacket(winnerId, reason, new PlayerResult[0], false);
+            return new GameOverPacket(winnerId, reason, new PlayerResult[0], false, rewards);
         }
     }
 
