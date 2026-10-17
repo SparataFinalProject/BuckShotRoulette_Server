@@ -11,6 +11,22 @@ import org.junit.jupiter.api.Timeout;
 class LevelPolicyTest {
 
     @Test
+    @DisplayName("1대1: 이기면 20, 지면 5, 5턴 미만이면 0 (연승 보너스 없음)")
+    void matchExpRules() {
+        assertEquals(20, LevelPolicy.matchExp(true, 5));
+        assertEquals(5, LevelPolicy.matchExp(false, 5));
+        assertEquals(0, LevelPolicy.matchExp(true, 4));
+        assertEquals(0, LevelPolicy.matchExp(false, 4));
+    }
+
+    @Test
+    @DisplayName("싱글 클리어와 3~4인 라운드 승리는 20")
+    void singleAndRoundExp() {
+        assertEquals(20, LevelPolicy.singleClearExp());
+        assertEquals(20, LevelPolicy.roundWinExp());
+    }
+
+    @Test
     @DisplayName("이기면 기본 20 + 연승 × 2 (1연승 22, 5연승 30)")
     void winGivesBaseAndStreakBonus() {
         assertEquals(22, LevelPolicy.streakExp(GameResult.WIN, 1, 12));

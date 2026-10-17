@@ -1,6 +1,7 @@
 package com.buckshot.multi;
 
 import com.buckshot.devtest.DevRoomPackets.Member;
+import com.buckshot.level.LevelPolicy;
 import com.buckshot.multi.MultiPackets.ChatMessage;
 import com.buckshot.multi.MultiPackets.ItemGrabbed;
 import com.buckshot.multi.MultiPackets.ItemPhaseBegin;
@@ -17,8 +18,8 @@ import com.buckshot.multi.MultiPackets.RoundStart;
 import com.buckshot.multi.MultiPackets.Shot;
 import com.buckshot.multi.MultiPackets.ShotgunDropped;
 import com.buckshot.multi.MultiPackets.ShotgunPicked;
-import com.buckshot.money.MoneyService;
 import com.buckshot.multi.MultiPackets.Turn;
+import com.buckshot.reward.RewardService;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.session.UserDisconnectedEvent;
@@ -121,7 +122,7 @@ public class MultiGameService {
 
     private final PacketSender packetSender;
     private final Random random = new Random();
-    private MoneyService moneyService;   // 판이 끝나면 라운드 상금을 돈 탭에 쌓는다 (없으면 쌓지 않음: 테스트)
+    private RewardService rewardService;   // 라운드가 끝나면 이긴 사람에게 돈과 경험치를 쌓는다 (없으면 쌓지 않음: 테스트)
     Timing timing = Timing.ORIGINAL;
 
     private static final class Seat {
@@ -767,7 +768,12 @@ public class MultiGameService {
         game.phase = Phase.ROUND_END;
         boolean finalRound = game.round >= ROUNDS - 1;
         // 원작 WinRoutine: 이긴 사람에게 라운드 상금
-        if (winner >= 0 && winner < game.seats.size()) game.seats.get(winner).cash += ROUND_CASH[Math.min(game.round, ROUND_CASH.length - 1)];
+        if (winner >= 0 && winner < game.seats.size()) {
+            Seat winnerSeat = game.seats.get(winner);
+            int cash = ROUND_CASH[Math.min(game.round, ROUND_CASH.length - 1)];
+            winnerSeat.cash += cash;
+            payRound(winnerSeat, cash);
+        }
         MatchResults results = finalRound ? matchResults(game) : null;
         log.info("[multi] round {} end winner={} final={} results={}", game.round, winner, finalRound, results);
         broadcast(game, PacketType.MULTI_ROUND_END, new RoundEnd(winner, game.round, finalRound, results));
@@ -801,33 +807,31 @@ public class MultiGameService {
     }
 
     @Autowired
-    public void setMoneyService(MoneyService moneyService) {
-        this.moneyService = moneyService;
+    public void setRewardService(RewardService rewardService) {
+        this.rewardService = rewardService;
     }
 
     private void endGame(Game game) {
         game.over = true;
-        payCash(game);
         for (Seat s : game.seats) gameByUser.remove(s.userId, game);
         // 이 잠금 밖에서 부른다 (방 서비스가 자기 잠금을 잡는다)
         if (game.onEnded != null) TIMER.execute(game.onEnded);
     }
 
-    /** 나가지 않은 자리의 라운드 상금을 계정의 돈으로 쌓는다. DB를 쓰므로 이 잠금 밖(TIMER)에서 한다. */
-    private void payCash(Game game) {
-        if (moneyService == null) return;
-        Map<Long, Integer> pay = new HashMap<>();
-        for (Seat s : game.seats) {
-            if (!s.left && s.cash > 0) pay.put(s.userId, s.cash);
-        }
-        if (pay.isEmpty()) return;
-        TIMER.execute(() -> pay.forEach((userId, cash) -> {
+    /**
+     * 라운드를 이긴 자리에게 상금과 경험치를 바로 계정에 쌓는다 (돈가방 연출이 끝나기를 기다리지 않으므로 그 사이 나가도 받는다).
+     * DB를 쓰므로 이 잠금 밖(TIMER)에서 한다.
+     */
+    private void payRound(Seat winner, int cash) {
+        if (rewardService == null) return;
+        long userId = winner.userId;
+        TIMER.execute(() -> {
             try {
-                moneyService.add(userId, cash);
+                rewardService.reward(userId, cash, LevelPolicy.roundWinExp());
             } catch (RuntimeException e) {
-                log.warn("[multi] 상금 지급 실패 userId={} cash={}", userId, cash, e);
+                log.warn("[multi] 라운드 보상 실패 userId={} cash={}", userId, cash, e);
             }
-        }));
+        });
     }
 
     /** 테스트용: 자리 칸에 아이템을 놓아 둔다 */

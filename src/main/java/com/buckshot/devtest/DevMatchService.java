@@ -1,9 +1,11 @@
 package com.buckshot.devtest;
 
 import com.buckshot.game.GameRules;
+import com.buckshot.matchmaking.QuickMatchGame;
 import com.buckshot.matchmaking.RankedMatchGame;
 import com.buckshot.multi.MultiGameService;
 import com.buckshot.rating.RatingService;
+import com.buckshot.reward.RewardService;
 import com.buckshot.streak.service.StreakService;
 import com.buckshot.user.dto.PlayerProfileResponse;
 import com.buckshot.user.service.UserService;
@@ -32,6 +34,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
@@ -65,6 +68,12 @@ public class DevMatchService {
     private final StreakService streakService;
     private final MultiGameService multiGameService;   // 1대1 게임의 채팅
     private final RatingService ratingService;         // 랭크 매칭 결과의 Elo 반영
+    private RewardService rewardService;               // 1대1이 끝나면 돈·경험치 지급 (setter 주입: 없으면 지급 안 함)
+
+    @Autowired
+    public void setRewardService(RewardService rewardService) {
+        this.rewardService = rewardService;
+    }
 
     private Long waitingUserId;
     private int waitingSkin;   // 기다리는 사람 화면에 미리 보여 준 상대 마스크 = 나중에 들어오는 사람의 마스크
@@ -216,7 +225,7 @@ public class DevMatchService {
             room = new DevGameRoom(packetSender, pair[0], pair[1], streakGame);
             streakGame.attach(room);
         } else {
-            room = new DevGameRoom(packetSender, pair[0], pair[1]);
+            room = new DevGameRoom(packetSender, pair[0], pair[1], new QuickMatchGame(pair[0], pair[1], rewardService));
         }
         synchronized (this) {
             for (long id : pair) if (id != DevStreakGame.DEALER_ID) roomByUser.put(id, room);   // 딜러 자리는 여러 방이 함께 쓴다
@@ -257,8 +266,8 @@ public class DevMatchService {
         // 기존 서버 게임 진행 시스템을 그대로 사용
         DevGameRoom room = ranked
                 ? new DevGameRoom(packetSender, playerAId, playerBId,
-                        new RankedMatchGame(playerAId, playerBId, ratingService))
-                : new DevGameRoom(packetSender, playerAId, playerBId);
+                        new RankedMatchGame(playerAId, playerBId, ratingService, rewardService))
+                : new DevGameRoom(packetSender, playerAId, playerBId, new QuickMatchGame(playerAId, playerBId, rewardService));
 
         // DevFireHandler 등의 기존 입력 핸들러가
         // 해당 플레이어의 게임방을 찾을 수 있도록 등록
