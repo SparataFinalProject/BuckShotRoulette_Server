@@ -8,7 +8,7 @@ import com.buckshot.user.entity.User;
  * 리더보드 한 줄.
  *
  * @param rank   순위. 동점이면 같은 순위 (1, 2, 2, 4). 순위가 없으면 null (연승 기록 없음)
- * @param score  탭마다 다름 (레이팅 탭 rating, 레벨 탭 exp, 연승 탭 최고 연승)
+ * @param score  탭마다 다름 (레이팅 탭 rating, 레벨 탭 exp, 연승 탭 최고 연승, 돈 탭 money)
  * @param streak 연승 탭에서만 채워짐. 다른 탭은 null
  */
 public record RankingEntry(Integer rank, long userId, String nickname, String tier, int level, int score,

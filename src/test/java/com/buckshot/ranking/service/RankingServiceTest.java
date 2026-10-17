@@ -57,6 +57,27 @@ class RankingServiceTest {
     }
 
     @Test
+    @DisplayName("돈 탭: 돈이 같으면 같은 순위, 내 순위는 나보다 많은 사람 수 + 1")
+    void moneyTopHasSharedRanks() {
+        User a = user(1L, 1000);
+        User b = user(2L, 1000);
+        User c = user(3L, 1000);
+        ReflectionTestUtils.setField(a, "money", 210000);
+        ReflectionTestUtils.setField(b, "money", 70000);
+        ReflectionTestUtils.setField(c, "money", 70000);
+        when(userRepository.findById(3L)).thenReturn(Optional.of(c));
+        when(userRepository.findTop50ByOrderByMoneyDescIdAsc()).thenReturn(List.of(a, b, c));
+        when(userRepository.countByMoneyGreaterThan(70000)).thenReturn(1L);
+
+        RankingResponse response = service.ranking(RankingType.MONEY, 3L);
+
+        assertEquals(List.of(1, 2, 2), response.top().stream().map(RankingEntry::rank).toList());
+        assertEquals(210000, response.top().get(0).score());
+        assertEquals(2, response.me().rank());
+        assertEquals(70000, response.me().score());
+    }
+
+    @Test
     @DisplayName("레이팅이 같으면 같은 순위, 다음 순위는 그만큼 건너뛴다 (1, 2, 2, 4)")
     void ratingTopHasSharedRanks() {
         User a = user(1L, 1300);

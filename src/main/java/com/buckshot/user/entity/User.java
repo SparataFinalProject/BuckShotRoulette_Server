@@ -33,6 +33,9 @@ public class User {
     private int exp;
 
     @Column(nullable = false)
+    private int money;
+
+    @Column(nullable = false)
     private int wins;
 
     @Column(nullable = false)
@@ -103,6 +106,14 @@ public class User {
             losses++;
         }
         return rating - before;
+    }
+
+    /** 돈을 쌓는다. int 끝(약 21억)을 넘으면 넘치지 않고 그 값에서 멈춘다. */
+    public void gainMoney(int amount) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("money must be >= 0: " + amount);
+        }
+        this.money = (int) Math.min(Integer.MAX_VALUE, (long) money + amount);
     }
 
     public void gainExp(int amount) {

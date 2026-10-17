@@ -47,6 +47,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByExpGreaterThan(int exp);
 
     /**
+     * 돈 상위 50명. 같으면 먼저 가입한 사람이 위.
+     */
+    List<User> findTop50ByOrderByMoneyDescIdAsc();
+
+    /**
+     * 돈이 이 값보다 많은 사람 수 (내 순위 = 이 값 + 1).
+     */
+    long countByMoneyGreaterThan(int money);
+
+    /**
      * 최고 연승 상위 50명. 연승 ↓, 같으면 턴 ↑, 같으면 먼저 달성한 사람. 0연승은 제외.
      */
     @Query("""

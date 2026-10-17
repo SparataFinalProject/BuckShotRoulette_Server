@@ -23,7 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 리더보드 탭 3개 (레이팅·레벨·연승). 조회만 한다.
+ * 리더보드 탭 4개 (레이팅·레벨·연승·돈). 조회만 한다.
  * 순위는 공동 순위 (1, 2, 2, 4): 목록의 순위와 "나보다 위인 사람 수 + 1"이 항상 같다.
  */
 @Service
@@ -43,7 +43,16 @@ public class RankingService {
             case RATING -> ratingRanking(me);
             case LEVEL -> levelRanking(me);
             case STREAK -> streakRanking(me);
+            case MONEY -> moneyRanking(me);
         };
+    }
+
+    private RankingResponse moneyRanking(User me) {
+        List<User> top = userRepository.findTop50ByOrderByMoneyDescIdAsc();
+        int myRank = (int) userRepository.countByMoneyGreaterThan(me.getMoney()) + 1;
+        return new RankingResponse(
+                rankEntries(top, User::getMoney),
+                RankingEntry.of(me, myRank, me.getMoney()));
     }
 
     private RankingResponse ratingRanking(User me) {

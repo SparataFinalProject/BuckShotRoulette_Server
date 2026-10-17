@@ -17,10 +17,12 @@ import com.buckshot.multi.MultiPackets.RoundStart;
 import com.buckshot.multi.MultiPackets.Shot;
 import com.buckshot.multi.MultiPackets.ShotgunDropped;
 import com.buckshot.multi.MultiPackets.ShotgunPicked;
+import com.buckshot.money.MoneyService;
 import com.buckshot.multi.MultiPackets.Turn;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.session.UserDisconnectedEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -119,6 +121,7 @@ public class MultiGameService {
 
     private final PacketSender packetSender;
     private final Random random = new Random();
+    private MoneyService moneyService;   // 판이 끝나면 라운드 상금을 돈 탭에 쌓는다 (없으면 쌓지 않음: 테스트)
     Timing timing = Timing.ORIGINAL;
 
     private static final class Seat {
@@ -797,11 +800,34 @@ public class MultiGameService {
         return highest && value == 0 ? -1 : found;
     }
 
+    @Autowired
+    public void setMoneyService(MoneyService moneyService) {
+        this.moneyService = moneyService;
+    }
+
     private void endGame(Game game) {
         game.over = true;
+        payCash(game);
         for (Seat s : game.seats) gameByUser.remove(s.userId, game);
         // 이 잠금 밖에서 부른다 (방 서비스가 자기 잠금을 잡는다)
         if (game.onEnded != null) TIMER.execute(game.onEnded);
+    }
+
+    /** 나가지 않은 자리의 라운드 상금을 계정의 돈으로 쌓는다. DB를 쓰므로 이 잠금 밖(TIMER)에서 한다. */
+    private void payCash(Game game) {
+        if (moneyService == null) return;
+        Map<Long, Integer> pay = new HashMap<>();
+        for (Seat s : game.seats) {
+            if (!s.left && s.cash > 0) pay.put(s.userId, s.cash);
+        }
+        if (pay.isEmpty()) return;
+        TIMER.execute(() -> pay.forEach((userId, cash) -> {
+            try {
+                moneyService.add(userId, cash);
+            } catch (RuntimeException e) {
+                log.warn("[multi] 상금 지급 실패 userId={} cash={}", userId, cash, e);
+            }
+        }));
     }
 
     /** 테스트용: 자리 칸에 아이템을 놓아 둔다 */
