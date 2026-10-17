@@ -19,6 +19,7 @@ public final class PacketType {
     public static final String ROOM_JOIN = "ROOM_JOIN";                  // 개발용 방: 목록(roomId) 또는 방 코드(code)로 참가
     public static final String ROOM_LEAVE = "ROOM_LEAVE";                // 개발용 방: 방 떠나기
     public static final String ROOM_SET_FRIENDS_ONLY = "ROOM_SET_FRIENDS_ONLY";   // 개발용 방: 친구 전용(목록에서 숨김) 켜기/끄기, 방장만
+    public static final String ROOM_SET_ROUNDS = "ROOM_SET_ROUNDS";    // 개발용 방: 3~4인 라운드 수(1~3) 정하기, 방장만
     public static final String ROOM_SET_FOUR_PLAYER = "ROOM_SET_FOUR_PLAYER";    // 개발용 방: 3~4인 전용 켜기/끄기, 방장만 (3명 이상이면 끌 수 없음)
     public static final String ROOM_KICK = "ROOM_KICK";                  // 개발용 방: 추방, 방장만
     public static final String ROOM_START = "ROOM_START";                // 개발용 방: 게임 시작, 방장만 (기본 방은 2명일 때, 3~4인 전용 방은 3명 이상일 때)

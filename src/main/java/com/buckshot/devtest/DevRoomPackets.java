@@ -19,6 +19,10 @@ public final class DevRoomPackets {
     public record SetFourPlayer(boolean fourPlayer) {
     }
 
+    /** 3~4인 방의 라운드 수 (1~3, 범위를 벗어나면 서버가 맞춘다) */
+    public record SetRounds(int rounds) {
+    }
+
     public record Kick(long userId) {
     }
 
@@ -30,7 +34,13 @@ public final class DevRoomPackets {
     }
 
     /** members[0]이 방장 */
-    public record State(String roomId, String code, boolean friendsOnly, long hostUserId, List<Member> members, int maxMembers) {
+    public record State(String roomId, String code, boolean friendsOnly, long hostUserId, List<Member> members, int maxMembers,
+                        int rounds) {
+
+        /** 라운드 수가 필요 없는 곳(테스트 등)용: 기본 3 */
+        public State(String roomId, String code, boolean friendsOnly, long hostUserId, List<Member> members, int maxMembers) {
+            this(roomId, code, friendsOnly, hostUserId, members, maxMembers, 3);
+        }
     }
 
     /** 3~4인 전용 방의 게임 시작. 자리는 서버가 섞어서 정하고 순서가 자리 번호다 (방장이 0번이 아닐 수 있다) */

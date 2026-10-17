@@ -60,7 +60,8 @@ public class MultiGameService {
     static final int LOAD_DELAY_SEC = 2;            // 모두 아이템 받기를 끝내고 장전이 시작하기까지 (원작 2초)
     static final int READY_TIMEOUT_SEC = 20;
     static final int INTRO_TIMEOUT_SEC = 40;
-    static final int ROUNDS = 1;                    // [TEST] 원래 3. 원작 라운드 수 (0~2)
+    public static final int ROUNDS = 3;                    // 기본 라운드 수 = 원작 라운드 수 (0~2). 방장이 1~3으로 바꿀 수 있다
+    public static final int MIN_ROUNDS = 1;
     static final int[] ROUND_CASH = {70000, 75000, 80000};   // 원작 WinRoutine: 라운드 0~2 승자 상금 (결과 화면 "최고 자산가")
     static final int CHAT_MAX_LENGTH = 100;         // 채팅 한 줄 최대 글자 수
     static final long CHAT_MIN_INTERVAL_MS = 500;   // 도배 방지: 한 사람이 이 시간 안에 또 보낸 채팅은 버린다
@@ -164,6 +165,7 @@ public class MultiGameService {
         boolean loadScheduled; // 모두 아이템 받기를 끝내 장전을 예약함
         boolean over;
         Runnable onEnded;                                  // 마지막 라운드까지 끝났을 때 (endGame)
+        int rounds = ROUNDS;                               // 이 방이 진행할 라운드 수 (방장이 정한다)
         ShellDeck deck;                                   // 셸 묶음 뽑기 (게임 내내 이어진다)
         boolean[] shotgun = new boolean[0];                // 총 속의 실제 셸 순서 (true = 실탄). 서버만 안다
         int firstTurnSeat;                                 // 이번 라운드 선공 (원작 MAIN_active_first_turn_socket)
@@ -191,8 +193,14 @@ public class MultiGameService {
 
     /** onEnded: 마지막 라운드까지 끝나 게임이 정리될 때 한 번 부른다 (방을 다시 열 때, DevRoomService) */
     public void create(List<Member> players, Runnable onEnded) {
+        create(players, ROUNDS, onEnded);
+    }
+
+    /** rounds: 진행할 라운드 수 (MIN_ROUNDS~ROUNDS로 맞춘다). 이 라운드를 마치면 게임이 끝난다 */
+    public void create(List<Member> players, int rounds, Runnable onEnded) {
         Game game = new Game();
         game.onEnded = onEnded;
+        game.rounds = Math.max(MIN_ROUNDS, Math.min(ROUNDS, rounds));
         for (Member m : players) game.seats.add(new Seat(m.userId()));
         game.deck = new ShellDeck(players.size(), random);
         synchronized (this) {
@@ -766,7 +774,7 @@ public class MultiGameService {
     private void roundEnd(Game game, int winner) {
         game.token++;
         game.phase = Phase.ROUND_END;
-        boolean finalRound = game.round >= ROUNDS - 1;
+        boolean finalRound = game.round >= game.rounds - 1;
         // 원작 WinRoutine: 이긴 사람에게 라운드 상금
         if (winner >= 0 && winner < game.seats.size()) {
             Seat winnerSeat = game.seats.get(winner);

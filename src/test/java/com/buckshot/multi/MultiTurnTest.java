@@ -41,6 +41,14 @@ class MultiTurnTest {
 
     @BeforeEach
     void setUp() {
+        newGame(MultiGameService.ROUNDS);
+    }
+
+    /** rounds 라운드짜리 3인 게임을 새로 만든다 (보낸 패킷 기록은 비운다) */
+    private void newGame(int rounds) {
+        sent.clear();
+        shotsSeen = 0;
+        turnsSeen = 0;
         PacketSender sender = mock(PacketSender.class);
         doAnswer(inv -> {
             sent.add(new Sent(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
@@ -48,7 +56,7 @@ class MultiTurnTest {
         }).when(sender).sendTo(anyLong(), anyString(), any());
         game = new MultiGameService(sender);
         game.timing = new MultiGameService.Timing(0.05, 0.02, 1, 1, 0.1, 0.05, 0.3, 0.1, 0.02, 0.05);
-        game.create(List.of(new Member(1, "a"), new Member(2, "b"), new Member(3, "c")));
+        game.create(List.of(new Member(1, "a"), new Member(2, "b"), new Member(3, "c")), rounds, null);
     }
 
     /** 사용자 userId가 받은 type 패킷 중 조건에 맞는 첫 것 (from 번째부터). 없으면 4초까지 기다린다 */
@@ -480,6 +488,55 @@ class MultiTurnTest {
         }
         LoadShotgun load = nth(PacketType.MULTI_LOAD_SHOTGUN, LoadShotgun.class, 1);
         assertEquals((first + 1) % 3, load.firstTurnSeat());
+    }
+
+    /** 첫 라운드를 한 명만 남을 때까지 쏜다. 이때 온 첫 MULTI_ROUND_END를 돌려준다 */
+    private RoundEnd playFirstRoundToEnd() {
+        int shooter = startTurns();
+        boolean[] alive = {true, true, true};
+        while (aliveCount(alive) > 1) {
+            game.setChamberForTest(user(shooter), true, true, true, true, true, true, true, true);
+            int target = otherAlive(alive, shooter);
+            game.pickupShotgun(user(shooter));
+            game.shoot(user(shooter), target);
+            Shot shot = nth(PacketType.MULTI_SHOT, Shot.class, shotsSeen++);
+            alive[target] = shot.health()[target] > 0;
+            if (aliveCount(alive) > 1) shooter = nth(PacketType.MULTI_TURN, Turn.class, turnsSeen++).seat();
+        }
+        return nth(PacketType.MULTI_ROUND_END, RoundEnd.class, 0);
+    }
+
+    @Test
+    @DisplayName("라운드 수를 1로 정하면 첫 라운드가 끝날 때 게임이 끝난다 (결과 통계도 이때 온다)")
+    void oneRoundGameEndsAfterFirstRound() {
+        newGame(1);
+
+        RoundEnd end = playFirstRoundToEnd();
+
+        assertEquals(0, end.round());
+        assertTrue(end.finalRound());
+        assertNotNull(end.results(), "마지막 라운드라 결과가 온다");
+    }
+
+    @Test
+    @DisplayName("라운드 수를 2로 정하면 첫 라운드가 끝나도 게임은 이어진다")
+    void twoRoundGameContinuesAfterFirstRound() {
+        newGame(2);
+
+        RoundEnd end = playFirstRoundToEnd();
+
+        assertFalse(end.finalRound());
+        assertEquals(null, end.results());
+    }
+
+    @Test
+    @DisplayName("라운드 수는 1~3으로 맞춰진다 (0은 1라운드, 99는 3라운드)")
+    void roundsAreClamped() {
+        newGame(0);
+        assertTrue(playFirstRoundToEnd().finalRound(), "0은 1라운드로 본다");
+
+        newGame(99);
+        assertFalse(playFirstRoundToEnd().finalRound(), "99는 3라운드로 본다 (첫 라운드가 마지막이 아니다)");
     }
 
     @Test

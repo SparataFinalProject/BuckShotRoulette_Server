@@ -44,7 +44,7 @@ class DevRoomServiceTest {
         for (long u = 2; u <= total; u++) rooms.join(u, null, code(1));
         rooms.start(1);
         ArgumentCaptor<Runnable> ended = ArgumentCaptor.forClass(Runnable.class);
-        verify(multi).create(any(), ended.capture());
+        verify(multi).create(any(), org.mockito.ArgumentMatchers.anyInt(), ended.capture());
         return ended.getValue();
     }
 
@@ -177,6 +177,39 @@ class DevRoomServiceTest {
         int before = stateCount(3);
         rooms.requestState(3);
         assertEquals(before, stateCount(3));
+    }
+
+    @Test
+    @DisplayName("라운드 수는 기본 3이고, 방장이 정하면 상태에 반영되어 게임 시작에 그대로 쓴다")
+    void hostSetsRounds() {
+        rooms.create(1);
+        rooms.setFourPlayer(1, true);
+        assertEquals(3, lastState(1).rounds());
+
+        rooms.setRounds(1, 1);
+        assertEquals(1, lastState(1).rounds());
+
+        for (long u = 2; u <= 3; u++) rooms.join(u, null, code(1));
+        rooms.start(1);
+        ArgumentCaptor<Integer> rounds = ArgumentCaptor.forClass(Integer.class);
+        verify(multi).create(any(), rounds.capture(), any());
+        assertEquals(1, rounds.getValue());
+    }
+
+    @Test
+    @DisplayName("방장이 아니면 라운드 수를 못 바꾸고, 1~3 밖의 값은 맞춰진다")
+    void roundsAreHostOnlyAndClamped() {
+        rooms.create(1);
+        rooms.setFourPlayer(1, true);
+        rooms.join(2, null, code(1));
+
+        rooms.setRounds(2, 1);   // 방장이 아님
+        assertEquals(3, lastState(1).rounds());
+
+        rooms.setRounds(1, 0);
+        assertEquals(1, lastState(1).rounds());
+        rooms.setRounds(1, 99);
+        assertEquals(3, lastState(1).rounds());
     }
 
     @Test
