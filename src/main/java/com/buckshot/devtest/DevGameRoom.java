@@ -7,6 +7,7 @@ import com.buckshot.ws.packet.ItemType;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.packet.ShellType;
 import com.buckshot.ws.packet.Target;
+import com.buckshot.ws.packet.c2s.TestOptions;
 import com.buckshot.ws.packet.dto.ItemSlot;
 import com.buckshot.ws.packet.dto.PlayerResult;
 import com.buckshot.ws.packet.s2c.ErrorPacket;
@@ -21,6 +22,7 @@ import com.buckshot.ws.packet.s2c.ShellRevealedPacket;
 import com.buckshot.ws.packet.s2c.TurnStartPacket;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
@@ -55,7 +57,9 @@ public class DevGameRoom {
     // 연승 모드처럼 Listener를 붙인 방은 딜러 판단·기록(game.Item)이 아직 새 아이템을 모르므로 원작 5종만 쓴다 (Listener.newItems)
     private static final String[] ITEM_POOL_WITH_NEW = {
             ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS,
-            ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE };
+            ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE, ItemType.GAMBLE_COIN };
+    // 도박 동전은 한 사람이 동시에 1개까지만 (이미 가진 것 + 이번에 뽑은 것). 동전으로 새로 뽑을 때는 동전이 나오지 않는다
+    private static final int MAX_COINS_HELD = 1;
     // 상한 약: 이 확률로 체력 +2(최대 체력까지), 아니면 -1 (원작 Double or Nothing)
     private static final double MEDICINE_SUCCESS_CHANCE = 0.4;
     // 아이템을 다 놓을 때까지 기다리는 시간. 클라가 상자를 열고 PLACE_READY를 보낸 때부터 사람마다 따로 센다.
@@ -63,6 +67,8 @@ public class DevGameRoom {
     private static final int PLACE_TIME_LIMIT_SEC = 25;
     // PLACE_READY가 끝내 오지 않을 때(옛 클라 등) 지급한 때부터 기다리는 최대 시간. 지나면 남은 아이템을 모두 대신 놓는다
     private static final int PLACE_FALLBACK_SEC = 120;
+    // 도박 동전으로 새 아이템을 놓는 제한 시간 (ITEM_USED를 보낸 때부터. 클라는 동전 튕기기·상자에 돌려보내기 연출을 먼저 한다)
+    private static final int COIN_PLACE_TIME_LIMIT_SEC = 30;
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "dev-place-timer");
         t.setDaemon(true);
@@ -73,7 +79,7 @@ public class DevGameRoom {
     private final Listener listener;
     private final long[] users;
     private final Random random;
-    private final int maxHp;   // 시작 hp이자 최대 hp (Listener.maxHp: 1대1은 HP, 연승 모드는 GameRules.STREAK_HP)
+    private int maxHp;   // 시작 hp이자 최대 hp (Listener.maxHp: 1대1은 HP, 연승 모드는 GameRules.STREAK_HP, 테스트 옵션 startHp가 정할 수도 있다)
 
     private final Deque<String> shells = new ArrayDeque<>();   // 앞이 약실
     private final Map<Long, Integer> hp = new HashMap<>();
@@ -94,6 +100,9 @@ public class DevGameRoom {
     private int turnNumber;
     private int grantCount;
     private boolean over;
+    private long coinPlacingUser;   // 도박 동전을 쓴 뒤 새 아이템을 칸에 놓는 중인 사람 (0 = 없음). 놓는 동안 그 사람은 차례가 이어지지만 쏘거나 아이템을 쓸 수 없다
+    private int coinPlacingId;      // 지난 동전 배치의 타이머가 늦게 실행돼도 무시하려고
+    private TestOptions test;       // 개발용 테스트 옵션 (null이면 일반 규칙). begin() 전에 testOptions()로 넣는다
 
     public DevGameRoom(PacketSender sender, long userA, long userB) {
         this(sender, userA, userB, Listener.NONE);
@@ -116,6 +125,33 @@ public class DevGameRoom {
             cuffed.put(id, false);
             cuffSkipped.put(id, false);
         }
+    }
+
+    /** 개발용 테스트 옵션 (아이템 고정, 첫 장전부터 아이템, 개수 고정, 시작 체력). begin() 전에 한 번 넣는다. null이거나 꺼져 있으면 일반 규칙 */
+    public synchronized void testOptions(TestOptions options) {
+        this.test = options != null && options.enabled() ? options : null;
+        if (test != null) log.info("[dev] test options room={}v{} {}", users[0], users[1], test);
+        int start = startHp(test, maxHp);
+        if (start != maxHp) {
+            maxHp = start;
+            for (long id : users) hp.put(id, maxHp);
+        }
+    }
+
+    /**
+     * 테스트 옵션이 시작 체력을 정했으면(1 이상) 그 값(기본 최대 체력 HP를 넘으면 HP로 맞춤), 아니면 defaultHp.
+     * GAME_START에 담는 체력도 이 값을 써야 방의 체력과 어긋나지 않는다.
+     */
+    static int startHp(TestOptions options, int defaultHp) {
+        if (options == null || !options.enabled() || options.startHp() <= 0) return defaultHp;
+        return Math.min(options.startHp(), HP);
+    }
+
+    /** 테스트 옵션으로 고정한 지급 후보 (알 수 없는 이름은 뺀다). 없으면 null = 일반 후보를 쓴다 */
+    private String[] testPool() {
+        if (test == null || test.onlyItems() == null) return null;
+        String[] pool = test.onlyItems().stream().distinct().filter(i -> Arrays.asList(ITEM_POOL_WITH_NEW).contains(i)).toArray(String[]::new);
+        return pool.length == 0 ? null : pool;
     }
 
     /** GAME_START를 보낸 직후 호출: 첫 라운드를 시작한다. */
@@ -199,12 +235,18 @@ public class DevGameRoom {
             return false;
         }
 
+        if (ItemType.GAMBLE_COIN.equals(item) && heldCount(mine) < 2) {   // 동전 말고 돌려보낼 아이템이 없으면 쓸 수 없다
+            error(userId, "INVALID_STATE", PacketType.USE_ITEM);
+            return false;
+        }
+
         mine[slot] = null;
         int myHp = hp.get(userId);
         long handcuffedUserId = 0;
         int handcuffTurns = 0;
         String beerShell = "";
         String revealedShell = null;
+        ItemSlot[] swapped = new ItemSlot[0];
 
         switch (item) {
             case ItemType.MAGNIFIER -> {
@@ -242,12 +284,17 @@ public class DevGameRoom {
                     sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, shell, index));
                 }
             }
+            case ItemType.GAMBLE_COIN -> swapped = returnAllAndDraw(userId, mine);
             default -> { }
         }
 
         broadcast(PacketType.ITEM_USED, new DevItemUsedPacket(
-                userId, slot, item, myHp, shells.size(), sawed, handcuffedUserId, handcuffTurns, beerShell));
+                userId, slot, item, myHp, shells.size(), sawed, handcuffedUserId, handcuffTurns, beerShell, swapped));
         log.info("[dev] item room={} user={} item={} slot={}", users[0] + "v" + users[1], userId, item, slot);
+        if (ItemType.GAMBLE_COIN.equals(item)) {
+            int id = coinPlacingId;
+            TIMER.schedule(() -> coinPlaceTimeout(id), COIN_PLACE_TIME_LIMIT_SEC, TimeUnit.SECONDS);
+        }
         listener.itemUsed(userId, item, revealedShell, beerShell);
 
         if (myHp <= 0) {   // 상한 약으로 체력이 0이 됨
@@ -262,7 +309,8 @@ public class DevGameRoom {
     /** 지급받은 아이템 중 다음 하나를 slot에 놓는다. 고른 칸은 상대에게만 알린다 (내 화면은 이미 놓았다). */
     public synchronized void placeItem(long userId, int slot) {
         Deque<String> remaining = toPlace.get(userId);
-        if (over || !placing || remaining == null || remaining.isEmpty()) {
+        boolean coin = coinPlacingUser == userId;   // 도박 동전으로 받은 아이템을 놓는 중
+        if (over || !(placing || coin) || remaining == null || remaining.isEmpty()) {
             error(userId, "INVALID_STATE", PacketType.PLACE_ITEM);   // 시간 초과로 서버가 이미 놓은 뒤 늦게 온 요청 등
             return;
         }
@@ -272,7 +320,22 @@ public class DevGameRoom {
         }
 
         place(userId, slot, false);
-        if (allPlaced()) finishPlacing();
+        if (coin) {
+            if (remaining.isEmpty()) coinPlacingUser = 0;
+        } else if (allPlaced()) {
+            finishPlacing();
+        }
+    }
+
+    // 제한 시간: 도박 동전으로 받은 아이템 중 남은 것을 앞쪽 빈 칸부터 놓고 둘 다에게 알린다
+    private synchronized void coinPlaceTimeout(int id) {
+        if (over || coinPlacingUser == 0 || id != coinPlacingId) return;
+        long userId = coinPlacingUser;
+        String[] slots = items.get(userId);
+        for (int s = 0; s < SLOT_COUNT && !toPlace.get(userId).isEmpty(); s++)
+            if (slots[s] == null) place(userId, s, true);
+        coinPlacingUser = 0;
+        log.info("[dev] coin place timeout room={} user={}", users[0] + "v" + users[1], userId);
     }
 
     /** PLACE_READY: 클라가 상자를 열었다. 이때부터 이 사람의 배치 제한 시간을 센다 (배치마다 한 번만). */
@@ -328,12 +391,12 @@ public class DevGameRoom {
             cuffSkipped.put(id, false);
         }
 
-        if (round == 0) {   // 첫 라운드는 아이템 없음
+        if (round == 0 && (test == null || !test.itemsOnFirstTurn())) {   // 첫 라운드는 아이템 없음 (테스트 옵션으로 바로 받게 할 수 있다)
             loadShells(firstTurnUser);
             return;
         }
 
-        int count = listener.itemsPerGrant(grantCount, random);
+        int count = test != null && test.itemCount() > 0 ? test.itemCount() : listener.itemsPerGrant(grantCount, random);
         grantCount++;
         turnUserId = 0;   // 배치 중에는 누구의 턴도 아니다 (발사·아이템 사용 거절)
         placing = true;
@@ -420,29 +483,69 @@ public class DevGameRoom {
 
     // 종류만 정해 보낸다 (slot -1, 칸은 플레이어가 PLACE_ITEM으로 고름). 빈 칸보다 많으면 남는 아이템은 버림
     private void grant(long userId, int count) {
-        String[] pool = listener.newItems() ? ITEM_POOL_WITH_NEW : ITEM_POOL;
+        String[] fixedPool = testPool();   // 테스트: 이 아이템들 중에서만 (개수 상한 무시)
+        String[] pool = fixedPool != null ? fixedPool : listener.newItems() ? ITEM_POOL_WITH_NEW : ITEM_POOL;
         int free = 0;
         for (String s : items.get(userId)) if (s == null) free++;
         int n = Math.min(count, free);
 
-        // 원작처럼 담배는 한 사람이 동시에 GameRules.MAX_CIGARETTES_HELD개까지만: 이미 가진 것 + 이번에 뽑은 것이 다 차면 후보에서 뺀다
+        // 원작처럼 담배는 한 사람이 동시에 GameRules.MAX_CIGARETTES_HELD개까지만: 이미 가진 것 + 이번에 뽑은 것이 다 차면 후보에서 뺀다 (도박 동전도 같은 방식, 1개)
         int cigarettes = 0;
-        for (String s : items.get(userId)) if (ItemType.CIGARETTE.equals(s)) cigarettes++;
+        int coins = 0;
+        for (String s : items.get(userId)) {
+            if (ItemType.CIGARETTE.equals(s)) cigarettes++;
+            else if (ItemType.GAMBLE_COIN.equals(s)) coins++;
+        }
 
         Deque<String> types = new ArrayDeque<>();
         ItemSlot[] granted = new ItemSlot[n];
         for (int i = 0; i < n; i++) {
-            String item;
-            do {
-                item = pool[random.nextInt(pool.length)];
-            } while (ItemType.CIGARETTE.equals(item) && cigarettes >= GameRules.MAX_CIGARETTES_HELD);
+            String item = fixedPool != null ? pool[random.nextInt(pool.length)] : draw(pool, cigarettes, coins);
             if (ItemType.CIGARETTE.equals(item)) cigarettes++;
+            else if (ItemType.GAMBLE_COIN.equals(item)) coins++;
             types.add(item);
             granted[i] = new ItemSlot(-1, item);
         }
         toPlace.put(userId, types);
         placedCount.put(userId, 0);
         broadcast(PacketType.ITEMS_GRANTED, new ItemsGrantedPacket(userId, granted, count - n));
+    }
+
+    // 후보에서 하나 뽑는다. 이미 상한만큼 가진 담배·도박 동전은 다시 뽑지 않는다
+    private String draw(String[] pool, int cigarettes, int coins) {
+        String item;
+        do {
+            item = pool[random.nextInt(pool.length)];
+        } while ((ItemType.CIGARETTE.equals(item) && cigarettes >= GameRules.MAX_CIGARETTES_HELD)
+                || (ItemType.GAMBLE_COIN.equals(item) && coins >= MAX_COINS_HELD));
+        return item;
+    }
+
+    private static int heldCount(String[] slots) {
+        int n = 0;
+        for (String s : slots) if (s != null) n++;
+        return n;
+    }
+
+    // 도박 동전: 가진 아이템을 전부 상자에 돌려보내고 같은 개수를 새로 뽑는다 (동전은 다시 나오지 않는다).
+    // 칸은 정하지 않는다 (slot -1): 처음 받을 때처럼 플레이어가 PLACE_ITEM으로 하나씩 고른다 (상대에게 ITEM_PLACED, 제한 시간이 지나면 서버가 앞쪽 빈 칸에)
+    private ItemSlot[] returnAllAndDraw(long userId, String[] slots) {
+        int n = heldCount(slots);
+        Arrays.fill(slots, null);
+        Deque<String> types = new ArrayDeque<>();
+        ItemSlot[] drawn = new ItemSlot[n];
+        int cigarettes = 0;
+        for (int i = 0; i < n; i++) {
+            String item = draw(ITEM_POOL_WITH_NEW, cigarettes, MAX_COINS_HELD);
+            if (ItemType.CIGARETTE.equals(item)) cigarettes++;
+            types.add(item);
+            drawn[i] = new ItemSlot(-1, item);
+        }
+        toPlace.put(userId, types);
+        placedCount.put(userId, 0);
+        coinPlacingUser = n > 0 ? userId : 0;
+        coinPlacingId++;
+        return drawn;
     }
 
     // 수갑을 찬 사람의 첫 차례는 건너뛰고(상대에게 넘어감), 그다음 차례에 수갑을 부수고 진행
@@ -468,7 +571,7 @@ public class DevGameRoom {
     // ───────── 도우미 ─────────
 
     private boolean checkTurn(long userId, String requestType) {
-        if (over || userId != turnUserId) {
+        if (over || userId != turnUserId || coinPlacingUser != 0) {   // 도박 동전으로 받은 아이템을 놓는 동안은 쏘거나 아이템을 쓸 수 없다
             error(userId, "NOT_YOUR_TURN", requestType);
             return false;
         }
@@ -538,8 +641,8 @@ public class DevGameRoom {
         }
     }
 
-    /** ITEM_USED + 맥주로 뺀 탄 종류. 정식 규격(PacketSpec 5.5)에는 없는 개발용 필드. */
+    /** ITEM_USED + 맥주로 뺀 탄 종류 + 도박 동전으로 새로 채운 칸들 (동전이 아니면 빈 배열). 정식 규격(PacketSpec 5.5)에는 없는 개발용 필드. */
     public record DevItemUsedPacket(long userId, int slot, String itemType, int hp, int remainingShells, boolean sawActive,
-                                    long handcuffedUserId, int handcuffTurns, String shell) {
+                                    long handcuffedUserId, int handcuffTurns, String shell, ItemSlot[] items) {
     }
 }
