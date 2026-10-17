@@ -1,12 +1,14 @@
 package com.buckshot.matchmaking;
 
 import com.buckshot.devtest.DevGameRoom;
+import com.buckshot.game.GameRules;
 import com.buckshot.reward.OneOnOneRewards;
 import com.buckshot.reward.RewardService;
 import com.buckshot.ws.packet.GameOverReason;
 import com.buckshot.ws.packet.dto.PlayerResult;
 import com.buckshot.ws.packet.dto.PlayerReward;
 import com.buckshot.ws.packet.s2c.GameOverPacket;
+import java.util.Random;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -25,6 +27,11 @@ public class QuickMatchGame implements DevGameRoom.Listener {
     @Override
     public boolean newItems() {
         return true;   // 기본 1대1 방(Listener.NONE)과 같은 아이템 구성
+    }
+
+    @Override
+    public int itemsPerGrant(int grantIndex, Random random) {
+        return GameRules.ONE_ON_ONE_ITEMS_PER_GRANT;   // 사람끼리 1대1은 매번 4개 (첫 장전은 방 규칙대로 없음)
     }
 
     @Override

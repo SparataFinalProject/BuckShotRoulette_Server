@@ -57,9 +57,25 @@ public class DevGameRoom {
     // 연승 모드처럼 Listener를 붙인 방은 딜러 판단·기록(game.Item)이 아직 새 아이템을 모르므로 원작 5종만 쓴다 (Listener.newItems)
     private static final String[] ITEM_POOL_WITH_NEW = {
             ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS,
-            ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE, ItemType.GAMBLE_COIN };
+            ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE, ItemType.GAMBLE_COIN, ItemType.ADRENALINE };
     // 도박 동전은 한 사람이 동시에 1개까지만 (이미 가진 것 + 이번에 뽑은 것). 동전으로 새로 뽑을 때는 동전이 나오지 않는다
     private static final int MAX_COINS_HELD = 1;
+    // 아드레날린으로 훔칠 칸을 고르는 제한 시간 (아드레날린 ITEM_USED를 보낸 때부터). 클라는 주사·줌인 연출 뒤 8초 동안 고른다
+    private static final int STEAL_TIME_LIMIT_SEC = 20;
+
+    /**
+     * 한 사람이 동시에 가질 수 있는 아이템별 최대 개수 (가진 것 + 이번에 뽑은 것). 싱글 새 규칙(GameManager.PillMaxHeld)과 같다:
+     * 기본 5종은 원작 본편 amount_main(톱·돋보기·맥주·수갑 8, 담배 2), 추가 아이템은 원작 엔드리스 amount_don
+     * (상한 약 1, 대포폰 1, 아드레날린 2, 인버터 8), 도박 동전(원작에 없음)은 1
+     */
+    static int maxHeld(String item) {
+        return switch (item) {
+            case ItemType.CIGARETTE -> GameRules.MAX_CIGARETTES_HELD;
+            case ItemType.ADRENALINE -> 2;
+            case ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE, ItemType.GAMBLE_COIN -> 1;
+            default -> SLOT_COUNT;
+        };
+    }
     // 상한 약: 이 확률로 체력 +2(최대 체력까지), 아니면 -1 (원작 Double or Nothing)
     private static final double MEDICINE_SUCCESS_CHANCE = 0.4;
     // 아이템을 다 놓을 때까지 기다리는 시간. 클라가 상자를 열고 PLACE_READY를 보낸 때부터 사람마다 따로 센다.
@@ -103,6 +119,8 @@ public class DevGameRoom {
     private long coinPlacingUser;   // 도박 동전을 쓴 뒤 새 아이템을 칸에 놓는 중인 사람 (0 = 없음). 놓는 동안 그 사람은 차례가 이어지지만 쏘거나 아이템을 쓸 수 없다
     private int coinPlacingId;      // 지난 동전 배치의 타이머가 늦게 실행돼도 무시하려고
     private TestOptions test;       // 개발용 테스트 옵션 (null이면 일반 규칙). begin() 전에 testOptions()로 넣는다
+    private long stealingUser;      // 아드레날린을 쓰고 훔칠 상대 칸을 고르는 중인 사람 (0 = 없음). 다른 행동을 하거나 시간이 지나면 끝난다
+    private int stealingId;         // 지난 고르기의 타이머가 늦게 실행돼도 무시하려고
 
     public DevGameRoom(PacketSender sender, long userA, long userB) {
         this(sender, userA, userB, Listener.NONE);
@@ -184,6 +202,7 @@ public class DevGameRoom {
     /** @return 발사했으면 true (차례가 아니거나 대상이 틀리면 false, 에러를 보냄) */
     public synchronized boolean fire(long userId, String target) {
         if (!checkTurn(userId, PacketType.FIRE)) return false;
+        stealingUser = 0;   // 훔치기를 고르지 않고 쏘면 고르기는 끝난다
         if (!Target.SELF.equals(target) && !Target.OPPONENT.equals(target)) {
             error(userId, "INVALID_MESSAGE", PacketType.FIRE);
             return false;
@@ -218,6 +237,7 @@ public class DevGameRoom {
     /** @return 아이템을 썼으면 true (규칙상 못 쓰면 false, 에러를 보냄) */
     public synchronized boolean useItem(long userId, int slot) {
         if (!checkTurn(userId, PacketType.USE_ITEM)) return false;
+        stealingUser = 0;   // 훔치기를 고르지 않고 다른 아이템을 쓰면 고르기는 끝난다
 
         String[] mine = items.get(userId);
         if (slot < 0 || slot >= SLOT_COUNT || mine[slot] == null) {
@@ -239,8 +259,64 @@ public class DevGameRoom {
             error(userId, "INVALID_STATE", PacketType.USE_ITEM);
             return false;
         }
+        if (ItemType.ADRENALINE.equals(item) && !hasStealable(userId)) {   // 훔칠 게 없으면 쓸 수 없다 (클라도 쓰지 않는다)
+            error(userId, "INVALID_STATE", PacketType.USE_ITEM);
+            return false;
+        }
 
         mine[slot] = null;
+        return applyItem(userId, slot, item, mine, 0L);
+    }
+
+    /**
+     * 아드레날린을 쓴 사람이 상대 칸 하나를 훔쳐 바로 쓴다 (STEAL_ITEM). 효과는 훔친 사람이 그 아이템을 쓴 것과 같고,
+     * ITEM_USED의 slot은 빼앗긴 사람의 칸, fromUserId는 빼앗긴 사람이다.
+     * 훔칠 수 없는 것: 아드레날린, 그리고 지금 쓸 수 없는 수갑(상대가 이미 찼음)·쇠톱(이미 잘렸음). 싱글 GameManager.CanSteal과 같다
+     */
+    public synchronized boolean stealItem(long userId, int slot) {
+        if (!checkTurn(userId, PacketType.STEAL_ITEM)) return false;
+        if (stealingUser != userId) {   // 아드레날린을 쓰지 않았거나, 시간이 지났거나, 그 뒤 다른 행동을 했다
+            error(userId, "INVALID_STATE", PacketType.STEAL_ITEM);
+            return false;
+        }
+        long victim = other(userId);
+        String[] theirs = items.get(victim);
+        if (slot < 0 || slot >= SLOT_COUNT || !canSteal(userId, theirs[slot])) {
+            error(userId, "INVALID_SLOT", PacketType.STEAL_ITEM);
+            return false;
+        }
+        String item = theirs[slot];
+        theirs[slot] = null;
+        stealingUser = 0;
+        log.info("[dev] steal room={} thief={} item={} victimSlot={}", users[0] + "v" + users[1], userId, item, slot);
+        return applyItem(userId, slot, item, items.get(userId), victim);
+    }
+
+    private boolean canSteal(long thief, String item) {
+        if (item == null || ItemType.ADRENALINE.equals(item)) return false;
+        if (ItemType.HANDCUFFS.equals(item)) return !cuffed.get(other(thief));
+        if (ItemType.SAW.equals(item)) return !sawed;
+        return true;
+    }
+
+    private boolean hasStealable(long thief) {
+        for (String s : items.get(other(thief))) if (canSteal(thief, s)) return true;
+        return false;
+    }
+
+    private synchronized void stealTimeout(int id) {
+        if (id != stealingId || stealingUser == 0) return;
+        log.info("[dev] steal timeout room={} user={}", users[0] + "v" + users[1], stealingUser);
+        stealingUser = 0;
+    }
+
+    /**
+     * 칸에서 이미 떼어 낸 아이템의 효과를 userId가 쓴 것으로 적용하고 둘 다에게 알린다.
+     * fromUserId: 아드레날린으로 훔친 아이템이면 빼앗긴 사람 (slot은 그 사람 칸), 아니면 0.
+     * 아드레날린 자체는 효과 없이 알리고, 훔칠 칸을 고르는 동안(STEAL_ITEM을 기다림) 차례가 이어진다
+     */
+    private boolean applyItem(long userId, int slot, String item, String[] mine, long fromUserId) {
+        long other = other(userId);
         int myHp = hp.get(userId);
         long handcuffedUserId = 0;
         int handcuffTurns = 0;
@@ -285,11 +361,16 @@ public class DevGameRoom {
                 }
             }
             case ItemType.GAMBLE_COIN -> swapped = returnAllAndDraw(userId, mine);
+            case ItemType.ADRENALINE -> {
+                stealingUser = userId;
+                int id = ++stealingId;
+                TIMER.schedule(() -> stealTimeout(id), STEAL_TIME_LIMIT_SEC, TimeUnit.SECONDS);
+            }
             default -> { }
         }
 
         broadcast(PacketType.ITEM_USED, new DevItemUsedPacket(
-                userId, slot, item, myHp, shells.size(), sawed, handcuffedUserId, handcuffTurns, beerShell, swapped));
+                userId, slot, item, myHp, shells.size(), sawed, handcuffedUserId, handcuffTurns, beerShell, swapped, fromUserId));
         log.info("[dev] item room={} user={} item={} slot={}", users[0] + "v" + users[1], userId, item, slot);
         if (ItemType.GAMBLE_COIN.equals(item)) {
             int id = coinPlacingId;
@@ -489,20 +570,14 @@ public class DevGameRoom {
         for (String s : items.get(userId)) if (s == null) free++;
         int n = Math.min(count, free);
 
-        // 원작처럼 담배는 한 사람이 동시에 GameRules.MAX_CIGARETTES_HELD개까지만: 이미 가진 것 + 이번에 뽑은 것이 다 차면 후보에서 뺀다 (도박 동전도 같은 방식, 1개)
-        int cigarettes = 0;
-        int coins = 0;
-        for (String s : items.get(userId)) {
-            if (ItemType.CIGARETTE.equals(s)) cigarettes++;
-            else if (ItemType.GAMBLE_COIN.equals(s)) coins++;
-        }
+        // 아이템별 최대 개수(maxHeld): 이미 가진 것 + 이번에 뽑은 것이 다 찬 아이템은 후보에서 뺀다
+        Map<String, Integer> held = new HashMap<>();
+        for (String s : items.get(userId)) if (s != null) held.merge(s, 1, Integer::sum);
 
         Deque<String> types = new ArrayDeque<>();
         ItemSlot[] granted = new ItemSlot[n];
         for (int i = 0; i < n; i++) {
-            String item = fixedPool != null ? pool[random.nextInt(pool.length)] : draw(pool, cigarettes, coins);
-            if (ItemType.CIGARETTE.equals(item)) cigarettes++;
-            else if (ItemType.GAMBLE_COIN.equals(item)) coins++;
+            String item = fixedPool != null ? pool[random.nextInt(pool.length)] : draw(pool, held);
             types.add(item);
             granted[i] = new ItemSlot(-1, item);
         }
@@ -511,13 +586,12 @@ public class DevGameRoom {
         broadcast(PacketType.ITEMS_GRANTED, new ItemsGrantedPacket(userId, granted, count - n));
     }
 
-    // 후보에서 하나 뽑는다. 이미 상한만큼 가진 담배·도박 동전은 다시 뽑지 않는다
-    private String draw(String[] pool, int cigarettes, int coins) {
-        String item;
-        do {
-            item = pool[random.nextInt(pool.length)];
-        } while ((ItemType.CIGARETTE.equals(item) && cigarettes >= GameRules.MAX_CIGARETTES_HELD)
-                || (ItemType.GAMBLE_COIN.equals(item) && coins >= MAX_COINS_HELD));
+    // 후보에서 하나 뽑고 held에 센다. 최대 개수만큼 가진 아이템은 뽑지 않는다 (모두 다 찼으면 후보 전체에서: 싱글과 같다)
+    private String draw(String[] pool, Map<String, Integer> held) {
+        String[] from = Arrays.stream(pool).filter(i -> held.getOrDefault(i, 0) < maxHeld(i)).toArray(String[]::new);
+        if (from.length == 0) from = pool;
+        String item = from[random.nextInt(from.length)];
+        held.merge(item, 1, Integer::sum);
         return item;
     }
 
@@ -534,10 +608,10 @@ public class DevGameRoom {
         Arrays.fill(slots, null);
         Deque<String> types = new ArrayDeque<>();
         ItemSlot[] drawn = new ItemSlot[n];
-        int cigarettes = 0;
+        Map<String, Integer> held = new HashMap<>();
+        held.put(ItemType.GAMBLE_COIN, MAX_COINS_HELD);   // 동전으로 새로 뽑을 때 동전은 나오지 않는다
         for (int i = 0; i < n; i++) {
-            String item = draw(ITEM_POOL_WITH_NEW, cigarettes, MAX_COINS_HELD);
-            if (ItemType.CIGARETTE.equals(item)) cigarettes++;
+            String item = draw(ITEM_POOL_WITH_NEW, held);
             types.add(item);
             drawn[i] = new ItemSlot(-1, item);
         }
@@ -642,7 +716,8 @@ public class DevGameRoom {
     }
 
     /** ITEM_USED + 맥주로 뺀 탄 종류 + 도박 동전으로 새로 채운 칸들 (동전이 아니면 빈 배열). 정식 규격(PacketSpec 5.5)에는 없는 개발용 필드. */
+    // fromUserId: 아드레날린으로 훔친 아이템이면 빼앗긴 사람 (slot은 그 사람 칸). 보통은 0
     public record DevItemUsedPacket(long userId, int slot, String itemType, int hp, int remainingShells, boolean sawActive,
-                                    long handcuffedUserId, int handcuffTurns, String shell, ItemSlot[] items) {
+                                    long handcuffedUserId, int handcuffTurns, String shell, ItemSlot[] items, long fromUserId) {
     }
 }

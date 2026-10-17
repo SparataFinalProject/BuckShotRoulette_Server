@@ -10,6 +10,7 @@ public final class PacketType {
     public static final String RANKED_START = "RANKED_START";   // 연승 모드: 딜러와 바로 한 판 (대기열 없음)
     public static final String GAME_READY = "GAME_READY";
     public static final String USE_ITEM = "USE_ITEM";
+    public static final String STEAL_ITEM = "STEAL_ITEM";   // 1대1 아드레날린: 아드레날린을 쓴 뒤 훔칠 상대 칸 (서버가 ITEM_USED fromUserId = 빼앗긴 사람으로 알린다)
     public static final String FIRE = "FIRE";
     public static final String GUN_PICKUP = "GUN_PICKUP";   // 개발용: 총을 집었다 (상대에게 전달)
     public static final String AIM = "AIM";                  // 개발용: 대상을 골라 겨누기 시작했다 (상대에게 전달)

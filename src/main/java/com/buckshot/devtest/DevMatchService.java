@@ -441,6 +441,11 @@ public class DevMatchService {
         if (room != null) room.useItem(userId, slot);
     }
 
+    public void stealItem(long userId, int slot) {
+        DevGameRoom room = roomOf(userId);
+        if (room != null) room.stealItem(userId, slot);
+    }
+
     public void placeItem(long userId, int slot) {
         DevGameRoom room = roomOf(userId);
         if (room != null) room.placeItem(userId, slot);

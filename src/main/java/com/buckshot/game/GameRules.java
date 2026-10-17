@@ -11,6 +11,8 @@ public final class GameRules {
     public static final int MAX_ITEM_SLOTS = 8;
     /** 한 사람이 동시에 가질 수 있는 담배 수 (원작 amount_main). 다른 아이템은 칸 수만큼 가질 수 있다 */
     public static final int MAX_CIGARETTES_HELD = 2;
+    /** 사람끼리 1대1(바로 매칭·랭크 매칭)에서 매번 각자에게 주는 아이템 개수 (첫 장전은 원래대로 없음) */
+    public static final int ONE_ON_ONE_ITEMS_PER_GRANT = 4;
 
     public static final int LIVE_DAMAGE = 1;
     public static final int SAW_MULTIPLIER = 2;
