@@ -89,6 +89,23 @@ class DevStreakGame implements DevGameRoom.Listener {
         this.room = room;
     }
 
+    // ───────── 연승 모드 규칙 (원작 싱글 2라운드: 목숨 4, 장전 순서 고정. 아이템은 3~4개 무작위) ─────────
+
+    @Override
+    public int maxHp() {
+        return GameRules.STREAK_HP;
+    }
+
+    @Override
+    public int[] shellComposition(int loadIndex) {
+        return GameRules.streakShellComposition(loadIndex);
+    }
+
+    @Override
+    public int itemsPerGrant(int grantIndex, java.util.Random random) {
+        return GameRules.streakItemsPerGrant(random);
+    }
+
     // ───────── 방에서 오는 알림 (방 잠금 안) ─────────
 
     @Override
@@ -210,7 +227,7 @@ class DevStreakGame implements DevGameRoom.Listener {
             if (item == Item.HANDCUFFS && room.isCuffed(userId)) continue;
             usable.add(item);
         }
-        return new DealerObservation(room.hpOf(DEALER_ID), room.hpOf(userId), GameRules.MAX_HP,
+        return new DealerObservation(room.hpOf(DEALER_ID), room.hpOf(userId), GameRules.STREAK_HP,
                 memory.liveCount(), memory.blankCount(), memory.knownShell(),
                 room.sawActive(), room.isCuffed(userId), usable);
     }

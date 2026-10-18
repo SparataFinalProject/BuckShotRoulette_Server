@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.buckshot.devtest.DevMatchService;
 import com.buckshot.matchmaking.service.MatchmakingService;
 import com.buckshot.multi.MultiGameService;
+import com.buckshot.rating.RatingService;
 import com.buckshot.streak.service.StreakService;
 import com.buckshot.user.dto.PlayerProfileResponse;
 import com.buckshot.user.service.UserService;
@@ -35,7 +36,7 @@ class GameReadyHandlerTest {
         when(users.getProfile(anyLong())).thenAnswer(i -> new PlayerProfileResponse(i.getArgument(0), "p" + i.getArgument(0), 0, 0, 1000, "BRONZE"));
         MatchmakingService matchmaking = mock(MatchmakingService.class);
         DevMatchService dev = new DevMatchService(sender, users, mock(SessionRegistry.class), matchmaking,
-                mock(StreakService.class), mock(MultiGameService.class));
+                mock(StreakService.class), mock(MultiGameService.class), mock(RatingService.class));
         GameReadyHandler handler = new GameReadyHandler(matchmaking, dev);
 
         dev.startPair(1L, 2L);

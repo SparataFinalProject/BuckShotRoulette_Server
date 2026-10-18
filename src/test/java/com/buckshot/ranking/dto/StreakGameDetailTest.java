@@ -48,8 +48,8 @@ class StreakGameDetailTest {
         assertTrue(myFire.known());
         assertTrue(myFire.correct());
         assertEquals(NONE, myFire.saw());
-        assertEquals(6, myFire.hpMe());
-        assertEquals(4, myFire.hpDealer());
+        assertEquals(4, myFire.hpMe());                        // 연승 모드 시작 목숨 4 (GameRules.STREAK_HP)
+        assertEquals(2, myFire.hpDealer());
 
         ActView beer = r.get(0).turns().get(1).acts().get(0);
         assertEquals(0, beer.shell());                         // 공포탄(0)과 해당 없음(-1)이 구분된다
@@ -59,7 +59,7 @@ class StreakGameDetailTest {
         assertEquals(1.0, dealerFire.liveProb());
         assertFalse(dealerFire.known());
         assertFalse(dealerFire.correct());                     // 자신 + 실탄
-        assertEquals(3, dealerFire.hpDealer());
+        assertEquals(1, dealerFire.hpDealer());
     }
 
     @Test
@@ -78,7 +78,7 @@ class StreakGameDetailTest {
         assertTrue(dealer.get(1).correct());                   // 자신 + 공포탄
         assertEquals(1.0, dealer.get(4).liveProb());
         assertTrue(dealer.get(4).known());
-        assertEquals(5, dealer.get(4).hpMe());
+        assertEquals(3, dealer.get(4).hpMe());
 
         assertTrue(r.get(0).turns().get(1).cuffSkip());
         ActView dealerAgain = r.get(0).turns().get(1).acts().get(0);
@@ -101,9 +101,9 @@ class StreakGameDetailTest {
                   {"n":2,"who":"DEALER","acts":[{"k":"CIG"},{"k":"FIRE","tgt":"OPP","s":1,"d":6}]}]}]}
                 """);
         List<StreakGameDetail.TurnView> turns = r.get(0).turns();
-        assertEquals(6, turns.get(0).acts().get(0).hpMe());          // 6에서 담배: 그대로
-        assertEquals(5, turns.get(0).acts().get(1).hpMe());
-        assertEquals(6, turns.get(1).acts().get(0).hpDealer());
+        assertEquals(4, turns.get(0).acts().get(0).hpMe());          // 4(최대)에서 담배: 그대로
+        assertEquals(3, turns.get(0).acts().get(1).hpMe());
+        assertEquals(4, turns.get(1).acts().get(0).hpDealer());
         assertEquals(0, turns.get(1).acts().get(1).hpMe());          // 0 아래로 안 감
     }
 

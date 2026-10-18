@@ -89,6 +89,22 @@ public class User {
         return run.getWins() == bestStreak && run.getTurns() < bestStreakTurns;
     }
 
+    /**
+     * 랭크 매칭 한 판의 결과를 반영한다: 레이팅을 delta만큼 바꾸고(0 아래로는 내려가지 않음) 승·패를 센다.
+     *
+     * @return 실제로 바뀐 레이팅 (0 아래로 내려가지 않도록 잘렸으면 delta와 다를 수 있다)
+     */
+    public int applyRankedResult(boolean won, int delta) {
+        int before = rating;
+        rating = Math.max(0, rating + delta);
+        if (won) {
+            wins++;
+        } else {
+            losses++;
+        }
+        return rating - before;
+    }
+
     public void gainExp(int amount) {
         if (amount < 0) {
             throw new IllegalArgumentException("exp must be >= 0: " + amount);

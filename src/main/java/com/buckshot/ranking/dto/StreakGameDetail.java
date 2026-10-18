@@ -81,8 +81,8 @@ public record StreakGameDetail(long gameId, long runId, int index, GameResult re
         List<RoundView> out = new ArrayList<>();
         if (timeline == null || timeline.rounds() == null) return out;
 
-        int me = GameRules.MAX_HP;
-        int dealer = GameRules.MAX_HP;
+        int me = GameRules.STREAK_HP;       // 연승 모드 시작 목숨 (DevStreakGame.maxHp)
+        int dealer = GameRules.STREAK_HP;
         for (Timeline.Round round : timeline.rounds()) {
             String shells = round.shells();
             int consumed = 0;               // 약실 위치 = 지금까지 빠진 탄 수
@@ -117,8 +117,8 @@ public record StreakGameDetail(long gameId, long runId, int index, GameResult re
                             acts.add(new ActView(a.k(), "", NONE, 0, saw, NONE, false, false, me, dealer));
                         }
                         case Timeline.Act.CIG -> {
-                            if (mine) me = Math.min(GameRules.MAX_HP, me + 1);
-                            else dealer = Math.min(GameRules.MAX_HP, dealer + 1);
+                            if (mine) me = Math.min(GameRules.STREAK_HP, me + 1);
+                            else dealer = Math.min(GameRules.STREAK_HP, dealer + 1);
                             acts.add(new ActView(a.k(), "", NONE, 0, NONE, NONE, false, false, me, dealer));
                         }
                         default -> acts.add(new ActView(a.k(), "", NONE, 0, NONE, NONE, false, false, me, dealer));

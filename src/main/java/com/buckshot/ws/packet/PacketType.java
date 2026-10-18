@@ -14,6 +14,7 @@ public final class PacketType {
     public static final String GUN_PICKUP = "GUN_PICKUP";   // 개발용: 총을 집었다 (상대에게 전달)
     public static final String AIM = "AIM";                  // 개발용: 대상을 골라 겨누기 시작했다 (상대에게 전달)
     public static final String PLACE_ITEM = "PLACE_ITEM";    // 개발용: 지급받은 아이템을 놓을 칸
+    public static final String PLACE_READY = "PLACE_READY";  // 개발용: 아이템 상자를 열었다 (이때부터 배치 제한 시간을 센다)
     public static final String ROOM_CREATE = "ROOM_CREATE";              // 개발용 방: 방 만들기
     public static final String ROOM_JOIN = "ROOM_JOIN";                  // 개발용 방: 목록(roomId) 또는 방 코드(code)로 참가
     public static final String ROOM_LEAVE = "ROOM_LEAVE";                // 개발용 방: 방 떠나기

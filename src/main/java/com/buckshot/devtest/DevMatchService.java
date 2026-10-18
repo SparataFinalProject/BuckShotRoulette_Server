@@ -1,6 +1,9 @@
 package com.buckshot.devtest;
 
+import com.buckshot.game.GameRules;
+import com.buckshot.matchmaking.RankedMatchGame;
 import com.buckshot.multi.MultiGameService;
+import com.buckshot.rating.RatingService;
 import com.buckshot.streak.service.StreakService;
 import com.buckshot.user.dto.PlayerProfileResponse;
 import com.buckshot.user.service.UserService;
@@ -62,6 +65,7 @@ public class DevMatchService {
     private final MatchmakingService matchmakingService;
     private final StreakService streakService;
     private final MultiGameService multiGameService;   // 1대1 게임의 채팅
+    private final RatingService ratingService;         // 랭크 매칭 결과의 Elo 반영
 
     private Long waitingUserId;
     private int waitingSkin;   // 기다리는 사람 화면에 미리 보여 준 상대 마스크 = 나중에 들어오는 사람의 마스크
@@ -212,7 +216,8 @@ public class DevMatchService {
         synchronized (this) {
             ranked = rankedGames.remove(gameId);
         }
-        var players = new PlayerState[] { state(pair[0]), state(pair[1]) };
+        int startHp = ranked ? GameRules.STREAK_HP : HP;   // 연승 모드는 원작 싱글 2라운드처럼 목숨 4 (DevStreakGame.maxHp와 같다)
+        var players = new PlayerState[] { state(pair[0], startHp), state(pair[1], startHp) };
         Object start = ranked
                 ? new RankedGameStartPacket(gameId, MAX_ITEM_SLOTS, players, DevStreakGame.MODE, streakService.currentStreak(pair[0]))
                 : new GameStartPacket(gameId, MAX_ITEM_SLOTS, players);
@@ -245,21 +250,33 @@ public class DevMatchService {
             long playerAId,
             long playerBId
     ) {
+        startFromMatchmaking(gameId, playerAId, playerBId, false);
+    }
+
+    /**
+     * ranked가 true면 랭크 매칭: 진행은 같고, 판이 끝나면 Elo로 레이팅과 승패를 반영한다.
+     */
+    public void startFromMatchmaking(
+            String gameId,
+            long playerAId,
+            long playerBId,
+            boolean ranked
+    ) {
         multiGameService.openChat(playerAId, playerBId);   // 1대1 채팅 (startPair와 같다)
 
         // GAME_START에 필요한 플레이어 정보
         PlayerState[] players = {
-                state(playerAId),
-                state(playerBId)
+                state(playerAId, HP),
+                state(playerBId, HP)
         };
 
         // 기존 서버 게임 진행 시스템을 그대로 사용
-        DevGameRoom room = new DevGameRoom(
-                packetSender,
-                playerAId,
-                playerBId
-        );
-        room.testOptions(takeTestOptions(playerAId, playerBId));
+        DevGameRoom room = ranked
+                ? new DevGameRoom(packetSender, playerAId, playerBId,
+                        new RankedMatchGame(playerAId, playerBId, ratingService))
+                : new DevGameRoom(packetSender, playerAId, playerBId);
+        TestOptions testOptions = takeTestOptions(playerAId, playerBId);   // 랭크는 개발용 테스트 옵션을 쓰지 않는다 (남아 있는 값만 비운다)
+        if (!ranked) room.testOptions(testOptions);
 
         // DevFireHandler 등의 기존 입력 핸들러가
         // 해당 플레이어의 게임방을 찾을 수 있도록 등록
@@ -417,6 +434,11 @@ public class DevMatchService {
         if (room != null) room.placeItem(userId, slot);
     }
 
+    public void placeReady(long userId) {
+        DevGameRoom room = roomOf(userId);
+        if (room != null) room.placeReady(userId);
+    }
+
     private synchronized DevGameRoom roomOf(long userId) {
         DevGameRoom room = roomByUser.get(userId);
         if (room == null) log.info("[dev] request outside game userId={}", userId);
@@ -429,8 +451,8 @@ public class DevMatchService {
         return new PlayerProfile(p.userId(), p.nickname(), p.wins(), p.losses(), p.rating(), p.tier());
     }
 
-    private PlayerState state(long userId) {
-        if (userId == DevStreakGame.DEALER_ID) return new PlayerState(userId, "딜러", HP, HP, new ItemSlot[0], 0);
-        return new PlayerState(userId, userService.getProfile(userId).nickname(), HP, HP, new ItemSlot[0], 0);
+    private PlayerState state(long userId, int hp) {
+        if (userId == DevStreakGame.DEALER_ID) return new PlayerState(userId, "딜러", hp, hp, new ItemSlot[0], 0);
+        return new PlayerState(userId, userService.getProfile(userId).nickname(), hp, hp, new ItemSlot[0], 0);
     }
 }

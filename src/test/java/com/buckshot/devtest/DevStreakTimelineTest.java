@@ -37,7 +37,7 @@ class DevStreakTimelineTest {
 
     private static final long USER = 1L;
     private static final long DEALER = DevStreakGame.DEALER_ID;
-    private static final int SEEDS = 60;
+    private static final int SEEDS = 200;   // 연승 모드 목숨 4로 판이 짧아져 60개로는 맥주 재장전 같은 경우가 안 나온다
 
     /** 한 판의 결과: 저장하려던 타임라인·요약, 사람에게 간 패킷들, 사람이 이겼는지. */
     record Played(Timeline timeline, GameSummary summary, List<Object[]> sentToUser, boolean userWon) {
@@ -112,14 +112,14 @@ class DevStreakTimelineTest {
             assertEquals(expectedTurns, actualTurns, msg + " 차례");
 
             int myTurns = 0, myShots = 0, myCorrect = 0, damageToMe = 0, myPeeks = 0;
-            int[] hp = { GameRules.MAX_HP, GameRules.MAX_HP };   // [나, 딜러]
+            int[] hp = { GameRules.STREAK_HP, GameRules.STREAK_HP };   // [나, 딜러]
             int[] used = new int[Item.values().length];
             boolean saw = false;
 
             for (int ri = 0; ri < t.rounds().size(); ri++) {
                 Timeline.Round round = t.rounds().get(ri);
                 assertEquals(ri + 1, round.r(), msg);
-                int[] comp = GameRules.shellComposition(ri);   // {공포탄, 실탄}
+                int[] comp = GameRules.streakShellComposition(ri);   // {공포탄, 실탄}
                 assertEquals(comp[0] + comp[1], round.shells().length(), msg + " 탄 수");
                 assertEquals(comp[1], round.shells().chars().filter(c -> c == '1').count(), msg + " 실탄 수");
 
@@ -147,7 +147,7 @@ class DevStreakTimelineTest {
                             }
                             case Timeline.Act.BEER -> consumed.append(a.s());
                             case Timeline.Act.SAW -> saw = true;
-                            case Timeline.Act.CIG -> hp[me ? 0 : 1] = Math.min(GameRules.MAX_HP, hp[me ? 0 : 1] + 1);
+                            case Timeline.Act.CIG -> hp[me ? 0 : 1] = Math.min(GameRules.STREAK_HP, hp[me ? 0 : 1] + 1);
                             case Timeline.Act.MAG -> {
                                 assertNotNull(a.saw(), msg);
                                 assertEquals(round.shells().charAt(consumed.length()) - '0', (int) a.saw(), msg + " 돋보기");

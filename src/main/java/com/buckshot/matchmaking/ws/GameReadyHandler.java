@@ -91,7 +91,8 @@ public class GameReadyHandler
         devMatchService.startFromMatchmaking(
                 result.gameId(),
                 result.playerAId(),
-                result.playerBId()
+                result.playerBId(),
+                result.ranked()
         );
 
         // 게임 시작이 성공한 뒤 준비 단계의 매칭 정보 정리
