@@ -15,12 +15,20 @@ public final class OneOnOneRewards {
     }
 
     /**
+     * 진 사람이 판 초반(5턴 미만)에 나갔는가. 이때는 남은 사람도 돈·경험치를 받지 않는다
+     * (둘이 짜고 바로 나가는 식으로 돈·레이팅을 쌓지 못하게). 랭크 매칭은 나간 사람의 레이팅만 깎는다 (RankedMatchGame).
+     */
+    public static boolean quitEarly(int turns, boolean loserQuit) {
+        return loserQuit && turns < LevelPolicy.MIN_TURNS;
+    }
+
+    /**
      * @param turns       이 판에서 지나간 차례 수 (5턴 미만이면 경험치 없음)
      * @param loserQuit   진 사람이 중간에 나간 것인가 (나간 사람은 경험치 없음)
      * @return 실제로 쌓은 보상 (GAME_OVER에 담아 결과 화면에 보여 준다). 보상 서비스가 없거나 실패하면 빈 배열
      */
     public static PlayerReward[] grant(RewardService rewards, long winnerId, long loserId, int turns, boolean loserQuit) {
-        if (rewards == null) return new PlayerReward[0];
+        if (rewards == null || quitEarly(turns, loserQuit)) return new PlayerReward[0];
         try {
             int winnerExp = LevelPolicy.matchExp(true, turns);
             rewards.reward(winnerId, WIN_CASH, winnerExp);

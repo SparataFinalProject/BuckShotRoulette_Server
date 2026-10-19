@@ -15,7 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * 랭크 매칭 한 판: 진행은 바로 매칭과 같고, 판이 끝나면 Elo로 레이팅과 승패를 반영해 GAME_OVER에 담는다.
- * 중간에 나간 사람도 진 것으로 센다 (DISCONNECT).
+ * 중간에 나간 사람도 진 것으로 센다 (DISCONNECT). 5턴 미만에 나갔으면 남은 사람은 레이팅·돈·경험치가 없고 나간 사람만 레이팅이 깎인다.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -50,9 +50,13 @@ public class RankedMatchGame implements DevGameRoom.Listener {
     @Override
     public Object gameOver(long winnerId, String reason) {
         long loserId = winnerId == playerAId ? playerBId : playerAId;
-        PlayerReward[] rewards = OneOnOneRewards.grant(rewardService, winnerId, loserId, turns, GameOverReason.DISCONNECT.equals(reason));
+        boolean loserQuit = GameOverReason.DISCONNECT.equals(reason);
+        PlayerReward[] rewards = OneOnOneRewards.grant(rewardService, winnerId, loserId, turns, loserQuit);
         try {
-            RatingService.RatedResult r = ratingService.applyResult(winnerId, loserId);
+            // 5턴 미만에 나갔으면 남은 사람은 레이팅이 오르지 않고, 나간 사람만 깎인다
+            RatingService.RatedResult r = OneOnOneRewards.quitEarly(turns, loserQuit)
+                    ? ratingService.applyEarlyLeave(winnerId, loserId)
+                    : ratingService.applyResult(winnerId, loserId);
             log.info("[rank] game over winner={} rating={} delta={} loser={} rating={} delta={} reason={}",
                     winnerId, r.winner().rating(), r.winner().ratingDelta(),
                     loserId, r.loser().rating(), r.loser().ratingDelta(), reason);

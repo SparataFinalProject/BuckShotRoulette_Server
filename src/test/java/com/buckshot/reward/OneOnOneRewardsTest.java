@@ -49,6 +49,15 @@ class OneOnOneRewardsTest {
     }
 
     @Test
+    @DisplayName("5턴 미만에 진 사람이 나가면 남은 사람도 돈·경험치를 받지 않는다")
+    void earlyQuitGivesNobodyAnything() {
+        PlayerReward[] given = OneOnOneRewards.grant(rewards, 10L, 20L, 4, true);
+
+        assertEquals(0, given.length);
+        verify(rewards, never()).reward(anyLong(), anyInt(), anyInt());
+    }
+
+    @Test
     @DisplayName("보상 서비스가 없거나 실패해도 판 종료는 막지 않는다")
     void neverBreaksGameOver() {
         assertEquals(0, OneOnOneRewards.grant(null, 10L, 20L, 8, false).length);

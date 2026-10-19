@@ -65,8 +65,9 @@ class RankedMatchGameTest {
     }
 
     @Test
-    @DisplayName("나간 사람은 진 것으로 센다 (DISCONNECT)")
+    @DisplayName("나간 사람은 진 것으로 센다 (DISCONNECT, 5턴 이상 진행한 뒤)")
     void disconnectCountsAsLoss() {
+        game.turnStarted(10L, 5, 0L);
         when(ratingService.applyResult(10L, 20L)).thenReturn(new RatingService.RatedResult(
                 new RatingService.Change(10L, 1, 0, 16, 1016),
                 new RatingService.Change(20L, 0, 1, -16, 984)));
@@ -76,6 +77,26 @@ class RankedMatchGameTest {
         assertTrue(packet.recorded());
         assertEquals(-16, packet.results()[1].ratingDelta());
         assertEquals(20L, packet.results()[1].userId());
+    }
+
+    @Test
+    @DisplayName("5턴 미만에 나가면 남은 사람은 레이팅·돈·경험치가 없고 나간 사람만 레이팅이 깎인다")
+    void earlyLeaveGivesWinnerNothing() {
+        var rewards = mock(com.buckshot.reward.RewardService.class);
+        var game = new RankedMatchGame(10L, 20L, ratingService, rewards);
+        game.turnStarted(10L, 4, 0L);   // 4턴째에 나감
+        when(ratingService.applyEarlyLeave(10L, 20L)).thenReturn(new RatingService.RatedResult(
+                new RatingService.Change(10L, 0, 0, 0, 1000),
+                new RatingService.Change(20L, 0, 1, -16, 984)));
+
+        GameOverPacket packet = (GameOverPacket) game.gameOver(10L, GameOverReason.DISCONNECT);
+
+        org.mockito.Mockito.verify(ratingService, org.mockito.Mockito.never()).applyResult(10L, 20L);
+        assertTrue(packet.recorded());
+        assertEquals(0, packet.results()[0].ratingDelta());
+        assertEquals(-16, packet.results()[1].ratingDelta());
+        assertEquals(0, packet.rewards().length);
+        org.mockito.Mockito.verifyNoInteractions(rewards);
     }
 
     @Test

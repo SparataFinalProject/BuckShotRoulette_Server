@@ -11,7 +11,7 @@ public final class LevelPolicy {
     static final int STREAK_BONUS_PER_WIN = 2;
     static final int STREAK_BONUS_MAX = 20;
     static final int STREAK_LOSE_EXP = 5;
-    static final int MIN_TURNS = 5;
+    public static final int MIN_TURNS = 5;
     static final int EXP_PER_LEVEL = 100;
 
     public static int levelOf(int exp) {
