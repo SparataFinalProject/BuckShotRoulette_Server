@@ -313,9 +313,13 @@ public class MultiGameService {
         seat.holdingShotgun = false;
         // 혼자 남으면 남은 라운드를 하지 않고 그 사람의 승리로 게임을 끝낸다 (아이템 받기·장전 중이어도 기다리지 않는다)
         int last = lastRemainingSeat(game);
-        if (game.started && last != -1) {
-            if (game.phase != Phase.ROUND_END) roundEnd(game, last);
-            else if (!game.finalRoundSent) concludeEarly(game, last);
+        if (last != -1) {
+            // 시작 전(모두 준비되기 전)이면 라운드를 하지 않고 상금 없이 결과만 보낸다
+            if (!game.started || game.phase == Phase.ROUND_END) {
+                if (!game.finalRoundSent) concludeEarly(game, last);
+            } else {
+                roundEnd(game, last);
+            }
             return;
         }
         if (!game.started && game.seats.stream().allMatch(s -> s.ready)) startRound(game);
@@ -335,7 +339,7 @@ public class MultiGameService {
     // ───── 단계 ─────
 
     private synchronized void startRound(Game game) {
-        if (game.started || game.over) return;
+        if (game.started || game.over || game.finalRoundSent) return;   // 시작 전에 혼자 남아 이미 끝났으면 뒤늦은 READY로 시작하지 않는다
         game.started = true;
         int n = game.seats.size();
         game.firstTurnSeat = pickFirstTurn(connected(game), game.firstDeadSeat, random);
@@ -393,7 +397,7 @@ public class MultiGameService {
     }
 
     private synchronized void beginItemPhase(Game game) {
-        if (game.itemPhase || game.over) return;
+        if (game.itemPhase || game.over || game.finalRoundSent) return;
         game.itemPhase = true;
         game.phase = Phase.ITEMS;
         game.token++;

@@ -161,6 +161,24 @@ class MultiLeaveTest {
     }
 
     @Test
+    @DisplayName("모두 준비되기 전에 나머지가 모두 나가면 라운드를 하지 않고 상금 없이 바로 끝난다")
+    void lastOneBeforeStartEndsWithoutRound() {
+        leave(1);
+        leave(2);
+        RoundEnd end = await(user(0), PacketType.MULTI_ROUND_END, RoundEnd.class, x -> true);
+        assertNotNull(end, "라운드 종료가 안 왔다");
+        assertEquals(0, end.winnerSeat());
+        assertTrue(end.finalRound(), "마지막 라운드가 아니다");
+        // 남은 사람이 뒤늦게 준비·입장 완료를 보내도 라운드와 아이템 받기가 시작되지 않는다
+        game.ready(user(0));
+        game.introDone(user(0));
+        sleep(1500);
+        assertEquals(0, count(user(0), PacketType.MULTI_ROUND_START, MultiPackets.RoundStart.class));
+        assertEquals(0, count(user(0), PacketType.MULTI_ITEM_PHASE_BEGIN, MultiPackets.ItemPhaseBegin.class));
+        assertEquals(1, count(user(0), PacketType.MULTI_ROUND_END, RoundEnd.class));
+    }
+
+    @Test
     @DisplayName("아이템 상자가 나오기 전에 나머지가 모두 나가면 기다리지 않고 바로 게임이 끝난다")
     void lastOneWinsBeforeItems() {
         for (long u = 1; u <= 3; u++) game.ready(u);
