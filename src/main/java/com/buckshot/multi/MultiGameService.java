@@ -164,6 +164,7 @@ public class MultiGameService {
         boolean itemPhase;     // MULTI_ITEM_PHASE_BEGIN을 보냄
         boolean loadScheduled; // 모두 아이템 받기를 끝내 장전을 예약함
         boolean over;
+        boolean finalRoundSent;                            // 마지막 MULTI_ROUND_END를 보냄 (곧 endGame)
         Runnable onEnded;                                  // 마지막 라운드까지 끝났을 때 (endGame)
         int rounds = ROUNDS;                               // 이 방이 진행할 라운드 수 (방장이 정한다)
         ShellDeck deck;                                   // 셸 묶음 뽑기 (게임 내내 이어진다)
@@ -309,6 +310,14 @@ public class MultiGameService {
         seat.jammed = false;
         broadcast(game, PacketType.MULTI_PLAYER_LEFT, new PlayerLeft(idx));
         boolean holdingGun = seat.holdingShotgun;
+        seat.holdingShotgun = false;
+        // 혼자 남으면 남은 라운드를 하지 않고 그 사람의 승리로 게임을 끝낸다 (아이템 받기·장전 중이어도 기다리지 않는다)
+        int last = lastRemainingSeat(game);
+        if (game.started && last != -1) {
+            if (game.phase != Phase.ROUND_END) roundEnd(game, last);
+            else if (!game.finalRoundSent) concludeEarly(game, last);
+            return;
+        }
         if (!game.started && game.seats.stream().allMatch(s -> s.ready)) startRound(game);
         else if (game.started && !game.itemPhase && game.phase == Phase.ITEMS && game.seats.stream().allMatch(s -> s.introDone)) beginItemPhase(game);
         else if (game.phase == Phase.ITEMS && game.itemPhase) checkItemPhaseOver(game);
@@ -321,7 +330,6 @@ public class MultiGameService {
                 else beginTurn(game, nextTurn(game.turnSeat, alive(game), game.turnCw), true, "timeout");
             }
         }
-        seat.holdingShotgun = false;
     }
 
     // ───── 단계 ─────
@@ -774,7 +782,9 @@ public class MultiGameService {
     private void roundEnd(Game game, int winner) {
         game.token++;
         game.phase = Phase.ROUND_END;
-        boolean finalRound = game.round >= game.rounds - 1;
+        // 혼자 남았으면(나머지가 모두 나감) 라운드가 남아 있어도 마지막 라운드다
+        boolean finalRound = game.round >= game.rounds - 1 || lastRemainingSeat(game) != -1;
+        game.finalRoundSent = finalRound;
         // 원작 WinRoutine: 이긴 사람에게 라운드 상금
         if (winner >= 0 && winner < game.seats.size()) {
             Seat winnerSeat = game.seats.get(winner);
@@ -787,6 +797,30 @@ public class MultiGameService {
         broadcast(game, PacketType.MULTI_ROUND_END, new RoundEnd(winner, game.round, finalRound, results));
         if (finalRound) later(game, timing.winSec(), () -> endGame(game));
         else later(game, timing.winSec(), () -> nextRound(game));
+    }
+
+    /**
+     * 라운드 승리 연출 중(다음 라운드 전)에 나머지가 모두 나갔을 때: 다음 라운드를 취소하고 결과를 담은 마지막 라운드 끝을 보낸다.
+     * 이 라운드의 상금은 이미 줬으므로 다시 주지 않는다.
+     */
+    private void concludeEarly(Game game, int winner) {
+        game.token++;
+        game.finalRoundSent = true;
+        MatchResults results = matchResults(game);
+        log.info("[multi] round {} conclude early winner={} results={}", game.round, winner, results);
+        broadcast(game, PacketType.MULTI_ROUND_END, new RoundEnd(winner, game.round, true, results));
+        later(game, timing.winSec(), () -> endGame(game));
+    }
+
+    /** 나가지 않은 자리가 하나면 그 자리, 아니면 -1 */
+    private static int lastRemainingSeat(Game game) {
+        int found = -1;
+        for (int i = 0; i < game.seats.size(); i++) {
+            if (game.seats.get(i).left) continue;
+            if (found != -1) return -1;
+            found = i;
+        }
+        return found;
     }
 
     /**
