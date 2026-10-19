@@ -1,5 +1,7 @@
 package com.buckshot.devtest;
 
+import com.buckshot.game.ai.DealerStyle;
+
 import com.buckshot.game.GameRules;
 import com.buckshot.matchmaking.QuickMatchGame;
 import com.buckshot.matchmaking.RankedMatchGame;
@@ -85,7 +87,8 @@ public class DevMatchService {
     // (방에서 시작한 뒤 로비 페이드 중에는 MATCH_CANCELLED를 받는 곳이 없다)
     private final Map<String, String> cancelled = new HashMap<>();
     private final Map<Long, DevGameRoom> roomByUser = new HashMap<>();   // 새 게임이 시작되면 덮어쓴다
-    private final Set<String> rankedGames = new HashSet<>();   // 연승 모드(딜러 상대) 게임 id
+    // 연승 모드(딜러 상대) 게임 id -> 매칭 때 고른 딜러 성격 (닉네임을 MATCH_FOUND부터 보여 주려고 미리 고른다)
+    private final Map<String, DealerStyle> rankedGames = new HashMap<>();
     private final Map<Long, TestOptions> testOptions = new HashMap<>();   // GAME_READY에 실려 온 개발용 테스트 옵션 (방을 만들 때 쓰고 지운다)
 
     // 먼저 기다리는 사람: 상대 마스크를 3개 중 무작위로 정해 MATCH_QUEUED로 알려 준다 (기다리는 동안 그 마스크를 보여 줌).
@@ -146,17 +149,18 @@ public class DevMatchService {
      */
     public void startRanked(long userId) {
         String gameId = UUID.randomUUID().toString();
+        DealerStyle style = DealerStyle.pick(random);   // 판마다 성격 하나 (닉네임도 성격마다 다르다)
         synchronized (this) {
             if (waitingUserId != null && waitingUserId == userId) waitingUserId = null;
             games.put(gameId, new long[] { userId, DevStreakGame.DEALER_ID });
             Set<Long> readyUsers = new HashSet<>();
             readyUsers.add(DevStreakGame.DEALER_ID);
             ready.put(gameId, readyUsers);
-            rankedGames.add(gameId);
+            rankedGames.put(gameId, style);
         }
-        log.info("[streak] ranked match gameId={} userId={}", gameId, userId);
+        log.info("[streak] ranked match gameId={} userId={} dealer={}", gameId, userId, style.id());
         packetSender.sendTo(userId, PacketType.MATCH_FOUND,
-                new MatchFoundPacket(gameId, profile(DevStreakGame.DEALER_ID), READY_TIMEOUT_SEC, 0));
+                new MatchFoundPacket(gameId, dealerProfile(style), READY_TIMEOUT_SEC, 0));
         TIMER.schedule(() -> readyTimeout(gameId), READY_TIMEOUT_SEC, TimeUnit.SECONDS);
     }
 
@@ -221,14 +225,15 @@ public class DevMatchService {
             ready.remove(gameId);
         }
 
-        boolean ranked;
+        DealerStyle dealerStyle;
         synchronized (this) {
-            ranked = rankedGames.remove(gameId);
+            dealerStyle = rankedGames.remove(gameId);
         }
+        boolean ranked = dealerStyle != null;
         // 테스트 옵션(시작 체력)은 사람끼리 1대1에서만 쓴다. GAME_START에 담는 체력도 옵션을 따라야 방의 체력과 맞는다
         TestOptions test = ranked ? null : takeTestOptions(pair[0], pair[1]);
         int startHp = ranked ? GameRules.STREAK_HP : DevGameRoom.startHp(test, HP);   // 연승 모드는 원작 싱글 2라운드처럼 목숨 4 (DevStreakGame.maxHp와 같다)
-        var players = new PlayerState[] { state(pair[0], startHp), state(pair[1], startHp) };
+        var players = new PlayerState[] { state(pair[0], startHp, dealerStyle), state(pair[1], startHp, dealerStyle) };
         Object start = ranked
                 ? new RankedGameStartPacket(gameId, MAX_ITEM_SLOTS, players, DevStreakGame.MODE, streakService.currentStreak(pair[0]))
                 : new GameStartPacket(gameId, MAX_ITEM_SLOTS, players);
@@ -238,7 +243,7 @@ public class DevMatchService {
 
         DevGameRoom room;
         if (ranked) {
-            var streakGame = new DevStreakGame(pair[0], streakService);
+            var streakGame = new DevStreakGame(pair[0], streakService, dealerStyle);
             room = new DevGameRoom(packetSender, pair[0], pair[1], streakGame);
             streakGame.attach(room);
         } else {
@@ -463,13 +468,27 @@ public class DevMatchService {
     }
 
     private PlayerProfile profile(long userId) {
-        if (userId == DevStreakGame.DEALER_ID) return new PlayerProfile(userId, "딜러", 0, 0, 0, "");
+        if (userId == DevStreakGame.DEALER_ID) return dealerProfile(DealerStyle.HARD);
         PlayerProfileResponse p = userService.getProfile(userId);
         return new PlayerProfile(p.userId(), p.nickname(), p.wins(), p.losses(), p.rating(), p.tier());
     }
 
+    /** 연승 딜러: 성격마다 닉네임이 다르다. */
+    private static PlayerProfile dealerProfile(DealerStyle style) {
+        return new PlayerProfile(DevStreakGame.DEALER_ID, style.nickname(), 0, 0, 0, "");
+    }
+
+    /** dealerStyle: 연승 판이면 딜러 성격 (아니면 null = 기본 "딜러"). */
+    private PlayerState state(long userId, int hp, DealerStyle dealerStyle) {
+        if (userId == DevStreakGame.DEALER_ID) {
+            String name = (dealerStyle == null ? DealerStyle.HARD : dealerStyle).nickname();
+            return new PlayerState(userId, name, hp, hp, new ItemSlot[0], 0);
+        }
+        return state(userId, hp);
+    }
+
     private PlayerState state(long userId, int hp) {
-        if (userId == DevStreakGame.DEALER_ID) return new PlayerState(userId, "딜러", hp, hp, new ItemSlot[0], 0);
+        if (userId == DevStreakGame.DEALER_ID) return state(userId, hp, DealerStyle.HARD);
         return new PlayerState(userId, userService.getProfile(userId).nickname(), hp, hp, new ItemSlot[0], 0);
     }
 }

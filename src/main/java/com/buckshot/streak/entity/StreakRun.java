@@ -3,6 +3,8 @@ package com.buckshot.streak.entity;
 import com.buckshot.game.Item;
 import com.buckshot.streak.GameSummary;
 import jakarta.persistence.*;
+import org.hibernate.annotations.MapKeyJdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -41,8 +43,11 @@ public class StreakRun {
     @Column(nullable = false)
     private int damageTaken;
 
+    // 아이템 이름은 문자열(VARCHAR)로 저장한다. MySQL 기본 enum(...) 컬럼은 아이템을 추가하면 새 이름을 넣지 못한다
     @ElementCollection
     @MapKeyEnumerated(EnumType.STRING)
+    @MapKeyJdbcTypeCode(SqlTypes.VARCHAR)
+    @MapKeyColumn(name = "item_usage_key", length = 32)
     private Map<Item, Integer> itemUsage = new EnumMap<>(Item.class);
 
     @Column(nullable = false)

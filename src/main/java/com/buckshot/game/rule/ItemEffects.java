@@ -55,6 +55,8 @@ public final class ItemEffects {
             }
             // 톱: 다음 발사 피해 2배
             case SAW -> new Effect(item, null, null, true, null);
+            // 새 아이템은 아직 이 규칙 코어에 없다 (1대1 방 DevGameRoom에만 있음)
+            case INVERTER, EXPIRED_MEDICINE, BURNER_PHONE, GAMBLE_COIN, ADRENALINE -> throw new BusinessException(ErrorCode.INVALID_STATE);
         };
     }
 

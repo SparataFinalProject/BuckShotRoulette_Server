@@ -1,5 +1,8 @@
 package com.buckshot.matchmaking;
 
+import com.buckshot.game.ItemPools;
+import java.util.List;
+
 import com.buckshot.devtest.DevGameRoom;
 import com.buckshot.game.GameRules;
 import com.buckshot.reward.OneOnOneRewards;
@@ -25,8 +28,8 @@ public class QuickMatchGame implements DevGameRoom.Listener {
     private int turns;
 
     @Override
-    public boolean newItems() {
-        return true;   // 기본 1대1 방(Listener.NONE)과 같은 아이템 구성
+    public List<String> itemPool() {
+        return ItemPools.DUEL;   // 기본 1대1 방(Listener.NONE)과 같은 아이템 구성
     }
 
     @Override

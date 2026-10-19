@@ -7,10 +7,12 @@ import com.buckshot.game.ai.DealerAction;
 import com.buckshot.game.ai.DealerBrain;
 import com.buckshot.game.ai.DealerMemory;
 import com.buckshot.game.ai.DealerObservation;
+import com.buckshot.game.ai.DealerStyle;
 import com.buckshot.game.ai.HardDealerBrain;
 import com.buckshot.streak.GameResult;
 import com.buckshot.streak.GameSummary;
 import com.buckshot.streak.StreakResult;
+import com.buckshot.streak.StreakSeason;
 import com.buckshot.streak.service.StreakService;
 import com.buckshot.streak.timeline.TimelineRecorder;
 import com.buckshot.ws.packet.ItemType;
@@ -22,6 +24,7 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -51,7 +54,7 @@ class DevStreakGame implements DevGameRoom.Listener {
     private final long userId;
     private final StreakService streakService;
     private final Scheduler scheduler;
-    private final DealerBrain brain = new HardDealerBrain();
+    private final HardDealerBrain brain;   // 판마다 성격(DealerStyle)을 하나 골라 판 내내 쓴다
     private final DealerMemory memory = new DealerMemory();
     private DevGameRoom room;
 
@@ -69,16 +72,25 @@ class DevStreakGame implements DevGameRoom.Listener {
     // 판별 타임라인 (양쪽 행동, 딜러의 돋보기 결과 포함). 판이 끝나면 저장
     private final TimelineRecorder timeline = new TimelineRecorder();
 
-    DevStreakGame(long userId, StreakService streakService) {
-        this(userId, streakService, (task, delayMs) -> DEALER.schedule(task, delayMs, TimeUnit.MILLISECONDS));
+    /** 실제 판: 매칭 때 고른 딜러 성격(MATCH_FOUND에 그 성격의 닉네임을 보냈다)으로 둔다. */
+    DevStreakGame(long userId, StreakService streakService, DealerStyle style) {
+        this(userId, streakService, (task, delayMs) -> DEALER.schedule(task, delayMs, TimeUnit.MILLISECONDS),
+                new HardDealerBrain(style, new Random()));
     }
 
-    /** scheduler: 딜러 행동을 예약하는 곳. 테스트는 예약된 일을 직접 꺼내 차례로 실행한다. */
+    /** scheduler: 딜러 행동을 예약하는 곳. 테스트는 예약된 일을 직접 꺼내 차례로 실행한다. 딜러는 기존 하드(무작위 없음). */
     DevStreakGame(long userId, StreakService streakService, Scheduler scheduler) {
+        this(userId, streakService, scheduler, new HardDealerBrain());
+    }
+
+    DevStreakGame(long userId, StreakService streakService, Scheduler scheduler, HardDealerBrain brain) {
         this.userId = userId;
         this.streakService = streakService;
         this.scheduler = scheduler;
+        this.brain = brain;
+        timeline.dealer(brain.style().id());   // 플레이어에게는 숨기고, 끝난 뒤 판 상세에서만 보인다
     }
+
 
     /** 딜러 행동 예약 (기본: dev-dealer 스레드에서 delayMs 뒤). */
     interface Scheduler {
@@ -107,6 +119,20 @@ class DevStreakGame implements DevGameRoom.Listener {
     }
 
     // ───────── 방에서 오는 알림 (방 잠금 안) ─────────
+
+    /**
+     * 연승 모드는 첫 라운드와 재장전 뒤 모두 항상 사람이 먼저 쏜다.
+     */
+    @Override
+    public long firstTurn(long next) {
+        return userId;
+    }
+
+    /** 지금 시즌의 아이템을 지급한다 (StreakSeason.CURRENT). */
+    @Override
+    public List<String> itemPool() {
+        return StreakSeason.CURRENT.items();
+    }
 
     @Override
     public void roundLoaded(long firstTurnUserId, List<String> shells) {
@@ -147,14 +173,22 @@ class DevStreakGame implements DevGameRoom.Listener {
     }
 
     @Override
-    public void itemUsed(long user, String item, String revealedShell, String ejectedShell) {
-        if (ejectedShell != null && !ejectedShell.isEmpty()) memory.onShellRemoved(Shell.valueOf(ejectedShell));
-        timeline.itemUsed(item, revealedShell, ejectedShell);
+    public void itemUsed(long user, String item, DevGameRoom.ItemDetail d) {
+        String ejected = d.ejectedShell();
+        if (ejected != null && !ejected.isEmpty()) memory.onShellRemoved(Shell.valueOf(ejected));
+        if (ItemType.INVERTER.equals(item)) memory.onInverted();   // 누가 썼든 약실이 뒤집혔다는 것은 모두 안다
+        timeline.itemUsed(item, d.revealedShell(), d.revealedIndex(), ejected, d.invertedTo(), d.hpDelta());
         if (user == userId) {
-            itemUsage.merge(Item.valueOf(item), 1, Integer::sum);
+            Item known = knownItem(item);
+            if (known != null) itemUsage.merge(known, 1, Integer::sum);   // 기록(game.Item)이 모르는 아이템은 세지 않는다
             return;
         }
-        if (ItemType.MAGNIFIER.equals(item) && revealedShell != null) memory.onPeeked(Shell.valueOf(revealedShell));
+        // 딜러가 본 탄만 딜러 기억에 넣는다 (사람이 본 것은 딜러가 모른다)
+        if (d.revealedShell() != null) {
+            Shell seen = Shell.valueOf(d.revealedShell());
+            if (d.revealedIndex() == 0) memory.onPeeked(seen);
+            else memory.onPhoneRevealed(d.revealedIndex(), seen);
+        }
     }
 
     @Override
@@ -164,9 +198,9 @@ class DevStreakGame implements DevGameRoom.Listener {
         timeline.ended(reason, winnerId == userId);
         try {
             StreakResult r = streakService.onGameEnd(userId, result, summary, timeline.build());
-            log.info("[streak] game over userId={} result={} streak={} best={} exp+{}", userId, result, r.streak(), r.bestStreak(), r.expGained());
+            log.info("[streak] game over userId={} result={} streak={} best={} exp+{} money+{}", userId, result, r.streak(), r.bestStreak(), r.expGained(), r.moneyGained());
             return new RankedGameOverPacket(winnerId, reason, new PlayerResult[0], true,
-                    MODE, r.streak(), r.bestStreak(), r.isNewBest(), r.expGained());
+                    MODE, r.streak(), r.bestStreak(), r.isNewBest(), r.expGained(), r.moneyGained());
         } catch (RuntimeException e) {
             log.warn("[streak] record failed userId={}: {}", userId, e.getMessage(), e);
             return new RankedGameOverPacket(winnerId, reason, new PlayerResult[0], false, MODE, 0, 0, false, 0);
@@ -217,19 +251,24 @@ class DevStreakGame implements DevGameRoom.Listener {
         }
     }
 
-    // 딜러가 볼 수 있는 것만으로 관찰을 만든다 (DealerMemory.observe와 같은 규칙, 방의 문자열 상태에서)
+    // 딜러가 볼 수 있는 것만으로 관찰을 만든다 (DealerMemory.observe와 같은 규칙, 방의 문자열 상태에서).
+    // 규칙상 쓸 수 있는지는 아이템 조건(DealerItem.usable)이 보므로 가진 아이템을 그대로 넘긴다. 딜러가 모르는 아이템은 뺀다
     private DealerObservation observe() {
-        Set<Item> usable = EnumSet.noneOf(Item.class);
+        Set<Item> held = EnumSet.noneOf(Item.class);
         for (String s : room.itemsOf(DEALER_ID)) {
-            if (s == null) continue;
-            Item item = Item.valueOf(s);
-            if (item == Item.SAW && room.sawActive()) continue;
-            if (item == Item.HANDCUFFS && room.isCuffed(userId)) continue;
-            usable.add(item);
+            Item item = knownItem(s);
+            if (item != null) held.add(item);
         }
         return new DealerObservation(room.hpOf(DEALER_ID), room.hpOf(userId), GameRules.STREAK_HP,
                 memory.liveCount(), memory.blankCount(), memory.knownShell(),
-                room.sawActive(), room.isCuffed(userId), usable);
+                room.sawActive(), room.isCuffed(userId), held, memory.knownAhead(), memory.chamberInverted());
+    }
+
+    // 패킷 문자열 -> Item. 빈 칸이거나 game.Item에 없는 아이템(새 아이템)이면 null
+    private static Item knownItem(String s) {
+        if (s == null) return null;
+        for (Item item : Item.values()) if (item.name().equals(s)) return item;
+        return null;
     }
 
     private int slotOf(Item item) {

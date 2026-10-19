@@ -47,12 +47,10 @@ class LevelPolicyTest {
     }
 
     @Test
-    @DisplayName("4턴이면 승리든 패배든 0, 5턴이면 받는다 (경계)")
-    void tooShortGameGivesNoExp() {
-        assertEquals(0, LevelPolicy.streakExp(GameResult.WIN, 3, 4));
-        assertEquals(0, LevelPolicy.streakExp(GameResult.LOSE, 0, 4));
-        assertTrue(LevelPolicy.streakExp(GameResult.WIN, 3, 5) > 0);
-        assertTrue(LevelPolicy.streakExp(GameResult.LOSE, 0, 5) > 0);
+    @DisplayName("연승 모드는 턴이 짧아도 받는다 (딜러전이라 턴 제한 없음)")
+    void shortStreakGameStillGivesExp() {
+        assertEquals(26, LevelPolicy.streakExp(GameResult.WIN, 3, 2));
+        assertEquals(5, LevelPolicy.streakExp(GameResult.LOSE, 0, 1));
     }
 
     @Test

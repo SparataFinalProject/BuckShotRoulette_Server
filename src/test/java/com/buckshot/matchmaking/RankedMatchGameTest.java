@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.buckshot.game.ItemPools;
 import com.buckshot.rating.RatingService;
 import com.buckshot.ws.packet.GameOverReason;
 import com.buckshot.ws.packet.dto.PlayerResult;
@@ -114,6 +115,6 @@ class RankedMatchGameTest {
     @Test
     @DisplayName("바로 매칭과 같은 아이템 구성(새 아이템 포함)을 쓴다")
     void usesNewItems() {
-        assertTrue(game.newItems());
+        assertEquals(ItemPools.DUEL, game.itemPool());
     }
 }

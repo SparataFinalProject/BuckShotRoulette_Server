@@ -1,6 +1,7 @@
 package com.buckshot.devtest;
 
 import com.buckshot.game.GameRules;
+import com.buckshot.game.ItemPools;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.GameOverReason;
 import com.buckshot.ws.packet.ItemType;
@@ -51,13 +52,6 @@ public class DevGameRoom {
 
     static final int HP = GameRules.MAX_HP;
     private static final int SLOT_COUNT = GameRules.MAX_ITEM_SLOTS;
-    private static final String[] ITEM_POOL = {
-            ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS };
-    // 새 아이템(원작 Double or Nothing)까지 넣은 후보. 1대1 개발 방(Listener.NONE)에서만 쓴다.
-    // 연승 모드처럼 Listener를 붙인 방은 딜러 판단·기록(game.Item)이 아직 새 아이템을 모르므로 원작 5종만 쓴다 (Listener.newItems)
-    private static final String[] ITEM_POOL_WITH_NEW = {
-            ItemType.MAGNIFIER, ItemType.BEER, ItemType.CIGARETTE, ItemType.SAW, ItemType.HANDCUFFS,
-            ItemType.INVERTER, ItemType.EXPIRED_MEDICINE, ItemType.BURNER_PHONE, ItemType.GAMBLE_COIN, ItemType.ADRENALINE };
     // 도박 동전은 한 사람이 동시에 1개까지만 (이미 가진 것 + 이번에 뽑은 것). 동전으로 새로 뽑을 때는 동전이 나오지 않는다
     private static final int MAX_COINS_HELD = 1;
     // 아드레날린으로 훔칠 칸을 고르는 제한 시간 (아드레날린 ITEM_USED를 보낸 때부터). 클라는 주사·줌인 연출 뒤 8초 동안 고른다
@@ -95,6 +89,7 @@ public class DevGameRoom {
     private final Listener listener;
     private final long[] users;
     private final Random random;
+    private final String[] itemPool;   // 지급할 아이템 (Listener.itemPool, 방을 만들 때 한 번 읽는다)
     private int maxHp;   // 시작 hp이자 최대 hp (Listener.maxHp: 1대1은 HP, 연승 모드는 GameRules.STREAK_HP, 테스트 옵션 startHp가 정할 수도 있다)
 
     private final Deque<String> shells = new ArrayDeque<>();   // 앞이 약실
@@ -135,6 +130,7 @@ public class DevGameRoom {
         this.sender = sender;
         this.random = random;
         this.listener = listener;
+        this.itemPool = ItemPools.validate(listener.itemPool()).toArray(String[]::new);
         this.maxHp = listener.maxHp();
         this.users = new long[] { userA, userB };
         for (long id : users) {
@@ -168,7 +164,7 @@ public class DevGameRoom {
     /** 테스트 옵션으로 고정한 지급 후보 (알 수 없는 이름은 뺀다). 없으면 null = 일반 후보를 쓴다 */
     private String[] testPool() {
         if (test == null || test.onlyItems() == null) return null;
-        String[] pool = test.onlyItems().stream().distinct().filter(i -> Arrays.asList(ITEM_POOL_WITH_NEW).contains(i)).toArray(String[]::new);
+        String[] pool = test.onlyItems().stream().distinct().filter(ItemPools.ALL::contains).toArray(String[]::new);
         return pool.length == 0 ? null : pool;
     }
 
@@ -322,11 +318,15 @@ public class DevGameRoom {
         int handcuffTurns = 0;
         String beerShell = "";
         String revealedShell = null;
+        int revealedIndex = -1;       // 돋보기 0, 대포폰은 약실에서 몇 번째 뒤
+        String invertedTo = null;     // 인버터: 뒤집힌 뒤 약실 탄
+        int hpBefore = myHp;
         ItemSlot[] swapped = new ItemSlot[0];
 
         switch (item) {
             case ItemType.MAGNIFIER -> {
                 revealedShell = shells.peekFirst();
+                revealedIndex = 0;
                 sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, revealedShell, 0));
             }
             case ItemType.CIGARETTE -> {
@@ -344,7 +344,8 @@ public class DevGameRoom {
             case ItemType.INVERTER -> {
                 // 약실의 탄을 뒤집는다. 무엇으로 바뀌었는지는 아무에게도 알리지 않는다
                 String chambered = shells.pollFirst();
-                shells.addFirst(ShellType.LIVE.equals(chambered) ? ShellType.BLANK : ShellType.LIVE);
+                invertedTo = ShellType.LIVE.equals(chambered) ? ShellType.BLANK : ShellType.LIVE;
+                shells.addFirst(invertedTo);
             }
             case ItemType.EXPIRED_MEDICINE -> {
                 myHp = random.nextDouble() < MEDICINE_SUCCESS_CHANCE ? Math.min(maxHp, myHp + 2) : myHp - 1;
@@ -358,6 +359,8 @@ public class DevGameRoom {
                     int index = 1 + random.nextInt(shells.size() - 1);
                     String shell = new ArrayList<>(shells).get(index);
                     sender.sendTo(userId, PacketType.SHELL_REVEALED, new ShellRevealedPacket(item, shell, index));
+                    revealedShell = shell;
+                    revealedIndex = index;
                 }
             }
             case ItemType.GAMBLE_COIN -> swapped = returnAllAndDraw(userId, mine);
@@ -376,7 +379,8 @@ public class DevGameRoom {
             int id = coinPlacingId;
             TIMER.schedule(() -> coinPlaceTimeout(id), COIN_PLACE_TIME_LIMIT_SEC, TimeUnit.SECONDS);
         }
-        listener.itemUsed(userId, item, revealedShell, beerShell);
+        listener.itemUsed(userId, item,
+                new ItemDetail(revealedShell, revealedIndex, beerShell, invertedTo, myHp - hpBefore, fromUserId));
 
         if (myHp <= 0) {   // 상한 약으로 체력이 0이 됨
             over = true;
@@ -465,8 +469,9 @@ public class DevGameRoom {
 
     // ───────── 진행 ─────────
 
-    // firstTurnUser: 첫 라운드는 무작위, 이후 라운드는 탄이 떨어진 턴의 다음 차례를 그대로 이어 간다
+    // firstTurnUser: 첫 라운드는 무작위, 이후 라운드는 탄이 떨어진 턴의 다음 차례 (listener.firstTurn으로 바꿀 수 있다)
     private void startRound(long firstTurnUser) {
+        firstTurnUser = listener.firstTurn(firstTurnUser);   // 연승 모드는 항상 사람
         for (long id : users) {
             cuffed.put(id, false);
             cuffSkipped.put(id, false);
@@ -565,7 +570,7 @@ public class DevGameRoom {
     // 종류만 정해 보낸다 (slot -1, 칸은 플레이어가 PLACE_ITEM으로 고름). 빈 칸보다 많으면 남는 아이템은 버림
     private void grant(long userId, int count) {
         String[] fixedPool = testPool();   // 테스트: 이 아이템들 중에서만 (개수 상한 무시)
-        String[] pool = fixedPool != null ? fixedPool : listener.newItems() ? ITEM_POOL_WITH_NEW : ITEM_POOL;
+        String[] pool = fixedPool != null ? fixedPool : itemPool;
         int free = 0;
         for (String s : items.get(userId)) if (s == null) free++;
         int n = Math.min(count, free);
@@ -611,7 +616,7 @@ public class DevGameRoom {
         Map<String, Integer> held = new HashMap<>();
         held.put(ItemType.GAMBLE_COIN, MAX_COINS_HELD);   // 동전으로 새로 뽑을 때 동전은 나오지 않는다
         for (int i = 0; i < n; i++) {
-            String item = draw(ITEM_POOL_WITH_NEW, held);
+            String item = draw(itemPool, held);   // 이 방의 아이템 목록에서 (동전이 나오는 방이면 1대1 목록)
             types.add(item);
             drawn[i] = new ItemSlot(-1, item);
         }
@@ -672,11 +677,26 @@ public class DevGameRoom {
 
         Listener NONE = new Listener() {
             @Override
-            public boolean newItems() { return true; }
+            public List<String> itemPool() {
+                return ItemPools.DUEL;
+            }
         };
 
-        /** 새 아이템(인버터·상한 약·대포폰)도 지급할지. 기본은 원작 5종만 (연승 모드의 딜러 판단·기록이 새 아이템을 아직 모름) */
-        default boolean newItems() { return false; }
+        /**
+         * 이 방에서 지급할 아이템 (방을 만들 때 한 번 읽는다). 기본은 원작 5종 (ItemPools).
+         * 비어 있거나 방이 모르는 아이템이 있으면 방을 만들 때 거절한다.
+         */
+        default List<String> itemPool() {
+            return ItemPools.CLASSIC;
+        }
+
+        /**
+         * 라운드(장전)마다 첫 차례를 누구에게 줄지. next: 원래 규칙의 차례 (첫 라운드는 무작위, 이후는 탄이 떨어진 순간의 다음 사람).
+         * 기본은 원래 규칙 그대로.
+         */
+        default long firstTurn(long next) {
+            return next;
+        }
 
         /** 시작 hp이자 최대 hp (담배·상한 약으로도 이 위로는 회복되지 않는다) */
         default int maxHp() { return HP; }
@@ -709,10 +729,32 @@ public class DevGameRoom {
         /** revealedShell: 돋보기로 본 탄 (돋보기가 아니면 null). ejectedShell: 맥주로 뺀 탄 (아니면 ""). */
         default void itemUsed(long userId, String item, String revealedShell, String ejectedShell) { }
 
+        /**
+         * 아이템을 썼다 (효과까지 적용한 뒤). 기본은 예전 형태(itemUsed 4개 인자)로 넘긴다.
+         * 쓴 사람만 아는 것(돋보기·대포폰으로 본 탄)도 들어 있으므로 상대에게 그대로 보여 주면 안 된다.
+         */
+        default void itemUsed(long userId, String item, ItemDetail detail) {
+            itemUsed(userId, item, ItemType.MAGNIFIER.equals(item) ? detail.revealedShell() : null, detail.ejectedShell());
+        }
+
         /** GAME_OVER로 보낼 내용. 연승 모드는 여기서 기록을 저장하고 연승·경험치를 담는다. */
         default Object gameOver(long winnerId, String reason) {
             return new GameOverPacket(winnerId, reason, new PlayerResult[0], false);
         }
+    }
+
+    /**
+     * 아이템 효과의 결과 (Listener.itemUsed).
+     *
+     * @param revealedShell 쓴 사람만 본 탄 (돋보기: 약실, 대포폰: revealedIndex 위치). 없으면 null
+     * @param revealedIndex 본 탄의 위치 (약실 0, 다음 1 …). 없으면 -1
+     * @param ejectedShell  맥주로 뺀 탄 (아니면 "")
+     * @param invertedTo    인버터로 뒤집힌 뒤 약실 탄 (아니면 null). 아무에게도 알리지 않는 정보
+     * @param hpDelta       쓴 사람 hp 변화 (담배 +1 / 상한 약 +2·+1·-1, 최대 hp에 걸리면 그만큼 적다)
+     * @param fromUserId    아드레날린으로 훔쳐 쓴 아이템이면 빼앗긴 사람, 아니면 0
+     */
+    public record ItemDetail(String revealedShell, int revealedIndex, String ejectedShell, String invertedTo, int hpDelta,
+                             long fromUserId) {
     }
 
     /** ITEM_USED + 맥주로 뺀 탄 종류 + 도박 동전으로 새로 채운 칸들 (동전이 아니면 빈 배열). 정식 규격(PacketSpec 5.5)에는 없는 개발용 필드. */

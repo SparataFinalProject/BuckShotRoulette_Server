@@ -5,6 +5,7 @@ import com.buckshot.common.error.ErrorCode;
 import com.buckshot.ranking.RankingType;
 import com.buckshot.ranking.dto.RankingEntry;
 import com.buckshot.ranking.dto.RankingResponse;
+import com.buckshot.ranking.dto.SeasonInfo;
 import com.buckshot.ranking.dto.StreakStats;
 import com.buckshot.streak.entity.StreakRun;
 import com.buckshot.streak.repository.StreakRunRepository;
@@ -17,6 +18,7 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
+import com.buckshot.streak.StreakSeason;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -72,11 +74,13 @@ public class RankingService {
     }
 
     /**
-     * 연승 탭. 0연승은 목록에서 빠지고(쿼리), 내가 0연승이면 내 순위는 null.
+     * 연승 탭: 지금 시즌(StreakSeason.CURRENT) 기록만. 0연승·다른 시즌 기록은 목록에서 빠지고(쿼리),
+     * 내가 이번 시즌 기록이 없으면 내 순위는 null.
      * 칸(정확도·턴/승 등)은 최고 기록을 세운 도전(StreakRun)에서 꺼낸다.
      */
     private RankingResponse streakRanking(User me) {
-        List<User> top = userRepository.findStreakTop(PageRequest.of(0, TOP_SIZE));
+        int season = StreakSeason.CURRENT.number();
+        List<User> top = userRepository.findStreakTop(season, PageRequest.of(0, TOP_SIZE));
 
         // 50명의 도전을 반복문에서 하나씩 꺼내면 쿼리가 50번 (N+1). 한 번에 꺼내 id로 찾는다.
         List<Long> runIds = top.stream().map(User::getBestRunId).filter(Objects::nonNull).toList();
@@ -91,7 +95,7 @@ public class RankingService {
             entries.add(RankingEntry.of(user, rank, user.getBestStreak(),
                     StreakStats.of(user, runs.get(user.getBestRunId()))));
         }
-        return new RankingResponse(entries, myStreakEntry(me));
+        return new RankingResponse(entries, myStreakEntry(me, season), SeasonInfo.of(StreakSeason.CURRENT));
     }
 
     /** 연승과 턴이 모두 같으면 공동 순위 (달성 시각은 보여 주는 순서만 정한다). */
@@ -99,11 +103,11 @@ public class RankingService {
         return a.getBestStreak() == b.getBestStreak() && a.getBestStreakTurns() == b.getBestStreakTurns();
     }
 
-    private RankingEntry myStreakEntry(User me) {
-        if (me.getBestStreak() == 0) {
-            return RankingEntry.of(me, null, 0);   // 기록 없음
+    private RankingEntry myStreakEntry(User me, int season) {
+        if (me.bestStreakIn(season) == 0) {
+            return RankingEntry.of(me, null, 0);   // 이번 시즌 기록 없음 (지난 시즌 기록은 보이지 않는다)
         }
-        int myRank = (int) userRepository.countBetterStreak(me.getBestStreak(), me.getBestStreakTurns()) + 1;
+        int myRank = (int) userRepository.countBetterStreak(season, me.getBestStreak(), me.getBestStreakTurns()) + 1;
         StreakRun run = me.getBestRunId() == null ? null : runRepository.findById(me.getBestRunId()).orElse(null);
         return RankingEntry.of(me, myRank, me.getBestStreak(), StreakStats.of(me, run));
     }

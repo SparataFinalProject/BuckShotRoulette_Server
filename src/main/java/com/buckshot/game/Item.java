@@ -8,5 +8,11 @@ public enum Item {
     BEER,
     MAGNIFIER,
     CIGARETTE,
-    SAW
+    SAW,
+    // 새 아이템 (원작 Double or Nothing). 1대1 방(DevGameRoom)이 효과를 안다. 핵심 규칙(ItemEffects)은 아직 원작 5종만
+    INVERTER,
+    EXPIRED_MEDICINE,
+    BURNER_PHONE,
+    GAMBLE_COIN,
+    ADRENALINE
 }

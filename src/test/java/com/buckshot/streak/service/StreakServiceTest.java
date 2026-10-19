@@ -56,7 +56,7 @@ class StreakServiceTest {
     }
 
     private StreakRun ongoingRun(int wins) {
-        StreakRun run = new StreakRun(1L, 1, LocalDateTime.now());
+        StreakRun run = new StreakRun(1L, com.buckshot.streak.StreakSeason.CURRENT.number(), LocalDateTime.now());
         ReflectionTestUtils.setField(run, "id", 10L);
         for (int i = 0; i < wins; i++) {
             run.recordWin(summary(10));
@@ -77,8 +77,9 @@ class StreakServiceTest {
 
         StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10), null);
 
-        assertEquals(new StreakResult(1, 1, true, 22), result);   // 1연승 10턴: 20 + 2
+        assertEquals(new StreakResult(1, 1, true, 22, 70_000), result);   // 1연승 10턴: 경험치 20 + 2, 돈 70,000
         assertEquals(22, user.getExp());
+        assertEquals(70_000, user.getMoney());
         verify(runRepository).save(any(StreakRun.class));
         assertEquals(10L, user.getBestRunId());
     }
@@ -93,6 +94,7 @@ class StreakServiceTest {
         StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10), null);
 
         assertEquals(3, result.streak());
+        assertEquals(90_000, result.moneyGained());   // 3연승: 70,000 + 2 × 10,000
         assertEquals(3, run.getWins());
         verify(runRepository, never()).save(any());
     }
@@ -107,8 +109,9 @@ class StreakServiceTest {
 
         StreakResult result = service.onGameEnd(1L, GameResult.LOSE, summary(10), null);
 
-        assertEquals(new StreakResult(0, 3, false, 5), result);   // 패배 10턴: 5
+        assertEquals(new StreakResult(0, 3, false, 5, 0), result);   // 패배 10턴: 경험치 5, 돈 없음
         assertEquals(5, user.getExp());
+        assertEquals(0, user.getMoney());
         assertFalse(run.isOngoing());
         assertEquals(3, run.getWins());   // 진 판은 도전 합계에 안 들어간다
     }
@@ -141,5 +144,27 @@ class StreakServiceTest {
         assertEquals(ErrorCode.USER_NOT_FOUND, e.getErrorCode());
         verify(runRepository, never()).save(any());
         verify(gameRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("시즌이 바뀌면 지난 시즌에 시작한 도전은 끝내고 이번 시즌 도전을 새로 시작한다")
+    void oldSeasonRunEndsOnNewSeason() {
+        StreakRun old = new StreakRun(1L, com.buckshot.streak.StreakSeason.CURRENT.number() + 1, LocalDateTime.now());
+        ReflectionTestUtils.setField(old, "id", 9L);
+        old.recordWin(summary(10));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(runRepository.findByUserIdAndEndedAtIsNull(1L)).thenReturn(Optional.of(old));
+        when(runRepository.save(any(StreakRun.class))).thenAnswer(invocation -> {
+            StreakRun run = invocation.getArgument(0);
+            ReflectionTestUtils.setField(run, "id", 10L);
+            return run;
+        });
+
+        StreakResult result = service.onGameEnd(1L, GameResult.WIN, summary(10), null);
+
+        assertFalse(old.isOngoing(), "지난 시즌 도전이 끝나야 한다");
+        assertEquals(1, result.streak(), "새 도전의 1연승");
+        verify(runRepository).save(any(StreakRun.class));
+        assertEquals(0, service.currentStreak(1L), "지난 시즌 도전의 연승은 이어지지 않는다");
     }
 }
