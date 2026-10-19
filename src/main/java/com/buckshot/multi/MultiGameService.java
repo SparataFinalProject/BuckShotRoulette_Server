@@ -75,12 +75,12 @@ public class MultiGameService {
             double winSec, double nextRoundItemSec, double itemUseScale, double removerSec) {
         /**
          * loadToTurn: 장전 패킷 뒤 셸 순서를 보여 주고(0.7+5+1.7) 첫 차례로 카메라가 가기까지(0.2+0.9). turnStart: 차례 패킷 뒤 카메라가 도착하기까지.
-         * turnTimeout 20: 원작 MAIN_timeout_duration_turn. targetTimeout 10: 총을 든 뒤 대상 고르기(원작 _shotgun_target_selection 21초는 길어서 줄임). shot 3.8: 쏘는 연출(1인칭 3.6+0.2, 3인칭 0.25+1.9+1.65).
+         * turnTimeout 80: 원작 MAIN_timeout_duration_turn 20초 + 처음 하는 사람이 아이템을 고민할 1분. targetTimeout 10: 총을 든 뒤 대상 고르기(원작 _shotgun_target_selection 21초는 길어서 줄임). shot 3.8: 쏘는 연출(1인칭 3.6+0.2, 3인칭 0.25+1.9+1.65).
          * drop: 총을 내려놓는 연출. win 9.3: 원작 WinRoutine(0.5+2+6.4+0.4). nextRoundItem: 새 라운드 표시·체력·번개를 다시 켜고 아이템 받기까지(추정)
          * itemUseScale: ITEM_USE_SEC와 재머·아드레날린 고르기 시간에 곱한다 (원작 1)
          * remover 3.5: 지난 라운드 아이템이 남아 있으면 원작 ClearUserInventories(아이템 수거기)가 끝나기를 기다리는 시간
          */
-        static final Timing ORIGINAL = new Timing(8.5, 1.1, 20, 10, 3.8, 1.0, 9.3, 6.0, 1.0, 3.5);
+        static final Timing ORIGINAL = new Timing(8.5, 1.1, 80, 10, 3.8, 1.0, 9.3, 6.0, 1.0, 3.5);
     }
 
     enum Phase {
