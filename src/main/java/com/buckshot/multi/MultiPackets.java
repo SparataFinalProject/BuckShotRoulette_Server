@@ -85,9 +85,11 @@ public final class MultiPackets {
      * phoneIndex: 대포폰이 알려 준 셸 순번(3~7, 쓴 사람에게만), -1이면 셸이 2개 이하라 알려 주지 못함, 0이면 모름. turnCw: 지금 턴 방향 (리모컨으로 바뀐다).
      * 쓰는 동안(원작 고정 시간)에는 다른 행동을 받지 않고, 끝나면 차례가 그대로 이어진다 (맥주로 셸이 다 떨어지면 아이템 받기부터 다시).
      * 재머(3)·아드레날린(8)은 이어서 ItemSecondary로 고르고 ItemSecondaryDone(또는 훔친 아이템의 ItemUsed)이 온다.
+     * 도박 동전(11): refill = 상자로 돌려보낸 아이템 수 (그 자리의 칸이 전부 비워진다). 연출이 끝나면(약 4.8초) 그 사람이 refill개를
+     * 아이템 받기와 같은 GRAB / PLACE로 새로 받고, 다 받으면 ITEM_PHASE_DONE(seat)이 온 뒤 차례가 이어진다. 다른 아이템은 0.
      */
     public record ItemUsed(int seat, int cell, int itemId, int shell, int shellsLeft, int[] health, boolean sawed,
-            boolean stolen, int fromSeat, int phoneIndex, boolean turnCw) {
+            boolean stolen, int fromSeat, int phoneIndex, boolean turnCw, int refill) {
     }
 
     /**

@@ -77,6 +77,13 @@ class MultiTurnTest {
         return null;
     }
 
+    /** userId가 받은 ITEM_GRABBED 중 seat가 꺼낸 것의 수 */
+    private int grabsBy(long userId, int seat) {
+        synchronized (sent) {
+            return (int) sent.stream().filter(s -> s.userId == userId && s.data instanceof MultiPackets.ItemGrabbed g && g.seat() == seat).count();
+        }
+    }
+
     private <T> int count(long userId, String type, Class<T> cls) {
         synchronized (sent) {
             return (int) sent.stream().filter(s -> s.userId == userId && s.type.equals(type) && cls.isInstance(s.data)).count();
@@ -238,15 +245,94 @@ class MultiTurnTest {
             }
         }
         int jammers = 0;
+        int coins = 0;
         synchronized (sent) {
             for (Sent s : sent) {
                 if (s.userId == 1 && s.data instanceof MultiPackets.ItemGrabbed g) {
-                    assertTrue(g.itemId() >= 1 && g.itemId() <= 10 && g.itemId() != 7, "나오면 안 되는 아이템 " + g.itemId());
+                    assertTrue(g.itemId() >= 1 && g.itemId() <= 11 && g.itemId() != 7, "나오면 안 되는 아이템 " + g.itemId());
                     if (g.itemId() == MultiGameService.JAMMER) jammers++;
+                    if (g.itemId() == MultiGameService.GAMBLE_COIN) coins++;
                 }
             }
         }
         assertTrue(jammers <= 1, "재머가 " + jammers + "개");
+        assertTrue(coins <= 1, "도박 동전이 " + coins + "개");
+    }
+
+    @Test
+    @DisplayName("도박 동전은 아이템 받기를 여러 번 해도 테이블에 하나까지만 나온다")
+    void coinAtMostOneOnTable() {
+        for (int round = 0; round < 60; round++) {
+            List<Sent> log = Collections.synchronizedList(new ArrayList<>());
+            PacketSender sender = mock(PacketSender.class);
+            doAnswer(inv -> {
+                log.add(new Sent(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+                return null;
+            }).when(sender).sendTo(anyLong(), anyString(), any());
+            MultiGameService g = new MultiGameService(sender);
+            g.create(List.of(new Member(1, "a"), new Member(2, "b"), new Member(3, "c"), new Member(4, "d")));
+            for (long u = 1; u <= 4; u++) g.ready(u);
+            for (long u = 1; u <= 4; u++) g.introDone(u);
+            // 모두 꺼내 들기만 하고 놓기 전에 다른 사람이 또 꺼내도 동전이 둘이 되면 안 된다
+            for (int i = 0; i < MultiGameService.FIXED_ITEM_COUNT; i++) {
+                for (long u = 1; u <= 4; u++) g.grabItem(u);
+                for (long u = 1; u <= 4; u++) g.placeItem(u, i);
+            }
+            long coins;
+            synchronized (log) {
+                coins = log.stream().filter(s -> s.userId == 1 && s.data instanceof MultiPackets.ItemGrabbed x && x.itemId() == MultiGameService.GAMBLE_COIN).count();
+            }
+            assertTrue(coins <= 1, "도박 동전이 " + coins + "개");
+        }
+    }
+
+    @Test
+    @DisplayName("도박 동전: 칸을 전부 비우고 같은 개수를 상자에서 다시 받는다 (동전은 다시 나오지 않고, 다른 사람은 못 받는다). 끝나면 차례가 이어진다")
+    void gambleCoinRefillsItems() {
+        int first = startTurns();
+        int other = (first + 1) % 3;
+        for (int i = 0; i < 4; i++) game.setItemForTest(user(first), i, 4);   // 담배 4개
+        game.setItemForTest(user(first), 7, MultiGameService.GAMBLE_COIN);
+        game.useItem(user(first), 7);
+        MultiPackets.ItemUsed used = await(user(other), PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class, x -> x.itemId() == MultiGameService.GAMBLE_COIN);
+        assertNotNull(used, "동전 사용 패킷이 안 왔다");
+        assertEquals(first, used.seat());
+        assertEquals(4, used.refill());
+        int grabbedBefore = grabsBy(user(other), first);
+        int otherBefore = count(user(first), PacketType.MULTI_ITEM_GRABBED, MultiPackets.ItemGrabbed.class);
+        sleep(300);   // 연출 시간(4.8초 x 0.02) 뒤 다시 받기가 시작된다
+        game.grabItem(user(other));   // 차례가 아닌 사람은 못 받는다
+        assertEquals(otherBefore, count(user(first), PacketType.MULTI_ITEM_GRABBED, MultiPackets.ItemGrabbed.class));
+        for (int i = 0; i < 4; i++) {
+            game.grabItem(user(first));
+            game.placeItem(user(first), i);
+        }
+        List<MultiPackets.ItemGrabbed> grabs = new ArrayList<>();
+        synchronized (sent) {
+            int seen = 0;
+            for (Sent s : sent) {
+                if (s.userId == user(other) && s.data instanceof MultiPackets.ItemGrabbed g && g.seat() == first) {
+                    if (++seen > grabbedBefore) grabs.add(g);
+                }
+            }
+        }
+        assertEquals(4, grabs.size());
+        for (MultiPackets.ItemGrabbed g : grabs) assertTrue(g.itemId() != MultiGameService.GAMBLE_COIN, "다시 받는데 동전이 나왔다");
+        assertNotNull(await(user(other), PacketType.MULTI_ITEM_PHASE_DONE, MultiPackets.ItemPhaseDone.class, x -> x.seat() == first && !x.timedOut()));
+        sleep(100);
+        game.pickupShotgun(user(first));   // 차례가 이어져 총을 집을 수 있다
+        assertNotNull(await(1, PacketType.MULTI_SHOTGUN_PICKED, ShotgunPicked.class, x -> x.seat() == first));
+    }
+
+    @Test
+    @DisplayName("도박 동전: 돌려보낼 다른 아이템이 없으면 쓸 수 없다")
+    void gambleCoinNeedsOtherItems() {
+        int first = startTurns();
+        for (int i = 0; i < 8; i++) game.setItemForTest(user(first), i, 0);
+        game.setItemForTest(user(first), 7, MultiGameService.GAMBLE_COIN);
+        game.useItem(user(first), 7);
+        sleep(100);
+        assertEquals(0, count(1, PacketType.MULTI_ITEM_USED, MultiPackets.ItemUsed.class));
     }
 
     @Test
