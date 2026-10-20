@@ -15,20 +15,34 @@ public class Dealer {
         memory = new DealerMemory();
     }
 
-    public void onLoaded(int live,int blank){
+    public void onLoaded(int live, int blank) {
         memory.onLoaded(live, blank);
     }
 
-    public void onShellRemoved(Shell shell){
+    public void onShellRemoved(Shell shell) {
         memory.onShellRemoved(shell);
     }
 
-    public void onPeeked(Shell shell){
+    public void onPeeked(Shell shell) {
         memory.onPeeked(shell);
     }
 
-    public DealerAction decide(GamePlayer me, GamePlayer opponent, boolean sawActive){
-        return brain.decide(memory.observe(me,opponent,sawActive));
+    /**
+     * 대포폰: 약실에서 offset번째 뒤의 탄 (1 = 다음 탄).
+     */
+    public void onPhoneRevealed(int offset, Shell shell) {
+        memory.onPhoneRevealed(offset, shell);
+    }
+
+    /**
+     * 누군가 인버터를 썼다.
+     */
+    public void onInverted() {
+        memory.onInverted();
+    }
+
+    public DealerAction decide(GamePlayer me, GamePlayer opponent, boolean sawActive) {
+        return brain.decide(memory.observe(me, opponent, sawActive));
     }
 
     public int slotOf(GamePlayer me, Item item) {

@@ -47,22 +47,33 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByExpGreaterThan(int exp);
 
     /**
-     * 최고 연승 상위 50명. 연승 ↓, 같으면 턴 ↑, 같으면 먼저 달성한 사람. 0연승은 제외.
+     * 돈 상위 50명. 같으면 먼저 가입한 사람이 위.
+     */
+    List<User> findTop50ByOrderByMoneyDescIdAsc();
+
+    /**
+     * 돈이 이 값보다 많은 사람 수 (내 순위 = 이 값 + 1).
+     */
+    long countByMoneyGreaterThan(int money);
+
+    /**
+     * 이 시즌의 최고 연승 상위 50명. 연승 ↓, 같으면 턴 ↑, 같으면 먼저 달성한 사람. 0연승과 다른 시즌 기록은 제외
+     * (bestSeason이 null인 옛 기록은 시즌 1).
      */
     @Query("""
             select u from User u
-            where u.bestStreak > 0
+            where u.bestStreak > 0 and coalesce(u.bestSeason, 1) = :season
             order by u.bestStreak desc, u.bestStreakTurns asc, u.bestAchievedAt asc
             """)
-    List<User> findStreakTop(Pageable pageable);
+    List<User> findStreakTop(@Param("season") int season, Pageable pageable);
 
     /**
-     * 나보다 기록이 좋은 사람 수: 연승이 더 길거나, 같은데 턴이 더 적은 사람.
+     * 이 시즌에 나보다 기록이 좋은 사람 수: 연승이 더 길거나, 같은데 턴이 더 적은 사람.
      */
     @Query("""
             select count(u) from User u
-            where u.bestStreak > :best
-               or (u.bestStreak = :best and u.bestStreakTurns < :turns)
+            where coalesce(u.bestSeason, 1) = :season
+              and (u.bestStreak > :best or (u.bestStreak = :best and u.bestStreakTurns < :turns))
             """)
-    long countBetterStreak(@Param("best") int best, @Param("turns") int turns);
+    long countBetterStreak(@Param("season") int season, @Param("best") int best, @Param("turns") int turns);
 }

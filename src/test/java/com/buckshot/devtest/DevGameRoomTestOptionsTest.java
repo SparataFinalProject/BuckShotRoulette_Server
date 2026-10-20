@@ -71,4 +71,41 @@ class DevGameRoomTestOptionsTest {
         verify(other, org.mockito.Mockito.times(2)).sendTo(eq(A), eq(PacketType.ITEMS_GRANTED), captor.capture());   // 두 플레이어 각각의 지급이 A에게 온다
         assertTrue(((ItemsGrantedPacket) captor.getValue()).items().length > 0);   // 첫 턴 아이템은 켜져 있으니 받는다 (일반 후보에서)
     }
+
+    @Test
+    @DisplayName("시작 체력 옵션: 두 사람 모두 그 체력으로 시작한다")
+    void startHpSetsBothPlayers() {
+        var room = room(new TestOptions(true, false, List.of(), 0, 2));
+
+        assertEquals(2, room.hpOf(A));
+        assertEquals(2, room.hpOf(B));
+    }
+
+    @Test
+    @DisplayName("시작 체력이 0이거나 옵션이 꺼져 있으면 원래 체력, 기본 최대 체력을 넘으면 그 체력으로 맞춘다")
+    void startHpIsOptionalAndCapped() {
+        assertEquals(DevGameRoom.HP, room(null).hpOf(A));
+        assertEquals(DevGameRoom.HP, room(new TestOptions(true, false, List.of(), 0, 0)).hpOf(A));
+        assertEquals(DevGameRoom.HP, room(new TestOptions(false, false, List.of(), 0, 1)).hpOf(A), "꺼진 옵션은 무시");
+        assertEquals(DevGameRoom.HP, room(new TestOptions(true, false, List.of(), 0, 99)).hpOf(A), "기본 최대 체력을 넘으면 맞춘다");
+        assertEquals(1, room(new TestOptions(true, false, List.of(), 0, 1)).hpOf(B));
+    }
+
+    @Test
+    @DisplayName("GAME_START용 시작 체력 계산: 옵션이 정했으면 그 값, 아니면 기본값")
+    void startHpHelper() {
+        assertEquals(6, DevGameRoom.startHp(null, 6));
+        assertEquals(6, DevGameRoom.startHp(new TestOptions(true, false, List.of(), 0, 0), 6));
+        assertEquals(3, DevGameRoom.startHp(new TestOptions(true, false, List.of(), 0, 3), 6));
+        assertEquals(6, DevGameRoom.startHp(new TestOptions(false, false, List.of(), 0, 3), 6));
+    }
+
+    @Test
+    @DisplayName("시작 체력이 1이면 실탄 한 발로 끝난다 (체력 1이 최대 체력이기도 해서 담배로 회복도 안 된다)")
+    void startHpOneIsAlsoMax() {
+        var room = room(new TestOptions(true, false, List.of(), 0, 1));
+
+        assertEquals(1, room.hpOf(A));
+        assertEquals(1, room.hpOf(B));
+    }
 }

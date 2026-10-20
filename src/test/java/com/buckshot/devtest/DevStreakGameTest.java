@@ -32,7 +32,7 @@ class DevStreakGameTest {
     private static final long DEALER = DevStreakGame.DEALER_ID;
 
     private final StreakService streakService = mock(StreakService.class);
-    private final DevStreakGame game = new DevStreakGame(USER, streakService);
+    private final DevStreakGame game = new DevStreakGame(USER, streakService, com.buckshot.game.ai.DealerStyle.HARD);
 
     DevStreakGameTest() {
         game.attach(new DevGameRoom(mock(PacketSender.class), USER, DEALER, game));   // begin 안 함: 체력만 쓴다
@@ -42,7 +42,7 @@ class DevStreakGameTest {
     @DisplayName("사람의 턴·사격·맞는 판단·받은 피해·아이템을 모아 판이 끝나면 저장한다")
     void recordsHumanStatsAndSavesOnGameOver() {
         when(streakService.onGameEnd(eq(USER), eq(GameResult.WIN), any(), any()))
-                .thenReturn(new StreakResult(3, 5, false, 26));
+                .thenReturn(new StreakResult(3, 5, false, 26, 90_000));
 
         game.turnStarted(USER, 1, 0);
         game.turnStarted(DEALER, 2, 0);                              // 딜러 차례는 세지 않는다
@@ -51,8 +51,8 @@ class DevStreakGameTest {
         game.fired(USER, USER, ShellType.LIVE, 1);            // 나 + 실탄: 틀림, 피해 1
         game.fired(USER, USER, ShellType.BLANK, 0);           // 나 + 공포탄: 맞음
         game.fired(DEALER, USER, ShellType.LIVE, 2);          // 딜러가 쏨: 사격은 안 세고 피해만 2
-        game.itemUsed(USER, "BEER", null, ShellType.BLANK);
-        game.itemUsed(DEALER, "SAW", null, "");               // 딜러 아이템은 세지 않는다
+        game.itemUsed(USER, "BEER", new DevGameRoom.ItemDetail(null, -1, ShellType.BLANK, null, 0, 0));
+        game.itemUsed(DEALER, "SAW", new DevGameRoom.ItemDetail(null, -1, "", null, 0, 0));   // 딜러 아이템은 세지 않는다
 
         RankedGameOverPacket packet = (RankedGameOverPacket) game.gameOver(USER, GameOverReason.HP_ZERO);
 
@@ -72,6 +72,7 @@ class DevStreakGameTest {
         assertEquals(3, packet.streak());
         assertEquals(5, packet.bestStreak());
         assertEquals(26, packet.expGained());
+        assertEquals(90_000, packet.moneyGained());
     }
 
     @Test

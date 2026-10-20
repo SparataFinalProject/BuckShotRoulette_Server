@@ -53,6 +53,25 @@ class RatingServiceTest {
     }
 
     @Test
+    @DisplayName("판 초반에 상대가 나가면 나간 사람만 평소처럼 깎이고 패가 늘며, 남은 사람은 그대로다")
+    void earlyLeaveOnlyPenalizesLeaver() {
+        User stayer = user(1, 1000);
+        User leaver = user(2, 1000);
+        when(userRepository.findAllByIdForUpdate(anyCollection())).thenReturn(List.of(stayer, leaver));
+
+        RatingService.RatedResult r = service.applyEarlyLeave(1, 2);
+
+        assertEquals(0, r.winner().ratingDelta());
+        assertEquals(1000, r.winner().rating());
+        assertEquals(0, r.winner().wins());
+        assertEquals(-16, r.loser().ratingDelta());
+        assertEquals(984, r.loser().rating());
+        assertEquals(1, r.loser().losses());
+        assertEquals(1000, stayer.getRating());   // 엔티티에도 반영
+        assertEquals(984, leaver.getRating());
+    }
+
+    @Test
     @DisplayName("점수는 판이 끝난 시점의 레이팅으로 계산한다 (약한 쪽 승리 +24 / -24)")
     void underdogWin() {
         User winner = user(1, 1000);

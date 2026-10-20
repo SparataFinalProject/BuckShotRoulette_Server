@@ -27,10 +27,9 @@ public class MatchmakingTimeoutScheduler {
     public void matchRankedUsers() {
         // MATCH_JOIN 처리(대기열 등록 + MATCH_QUEUED 전송)와 같은 잠금을 써서
         // 방금 들어온 사람에게 MATCH_FOUND가 MATCH_QUEUED보다 먼저 가지 않게 한다
-        matchFoundSender.runInRankedOrder(() ->
-                matchmakingService
-                        .matchRanked(System.currentTimeMillis())
-                        .forEach(matchFoundSender::send));
+        matchFoundSender
+                .pairInRankedOrder(() -> matchmakingService.matchRanked(System.currentTimeMillis()))
+                .forEach(matchFoundSender::send);
     }
 
     @Scheduled(fixedDelay = 1000)

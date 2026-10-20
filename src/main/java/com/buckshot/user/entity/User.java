@@ -33,6 +33,9 @@ public class User {
     private int exp;
 
     @Column(nullable = false)
+    private int money;
+
+    @Column(nullable = false)
     private int wins;
 
     @Column(nullable = false)
@@ -47,6 +50,9 @@ public class User {
     private LocalDateTime bestAchievedAt;
 
     private Long bestRunId;
+
+    /** 최고 기록(best*)을 세운 시즌 (StreakSeason 번호). 시즌 기능 전에 세운 기록은 null = 시즌 1 */
+    private Integer bestSeason;
 
     @CreationTimestamp
     @Column(updatable = false)
@@ -72,6 +78,9 @@ public class User {
      * @return 최고 기록을 바꿨으면 true (GAME_OVER의 isNewBest)
      */
     public boolean offerBest(StreakRun run, LocalDateTime now) {
+        if (bestSeasonNumber() != run.getSeason()) {
+            clearBest();   // 새 시즌: 지난 시즌 기록은 비교하지 않고 새로 쌓는다 (도전 기록 StreakRun에는 그대로 남는다)
+        }
         if (!isBetterThanBest(run)) {
             return false;
         }
@@ -79,7 +88,26 @@ public class User {
         bestStreakTurns = run.getTurns();
         bestAchievedAt = now;
         bestRunId = run.getId();
+        bestSeason = run.getSeason();
         return true;
+    }
+
+    /** 최고 기록을 세운 시즌 번호 (옛 기록은 1). */
+    public int bestSeasonNumber() {
+        return bestSeason == null ? 1 : bestSeason;
+    }
+
+    /** 이 시즌의 최고 연승 (다른 시즌 기록이면 0). */
+    public int bestStreakIn(int season) {
+        return bestSeasonNumber() == season ? bestStreak : 0;
+    }
+
+    private void clearBest() {
+        bestStreak = 0;
+        bestStreakTurns = 0;
+        bestAchievedAt = null;
+        bestRunId = null;
+        bestSeason = null;
     }
 
     private boolean isBetterThanBest(StreakRun run) {
@@ -103,6 +131,14 @@ public class User {
             losses++;
         }
         return rating - before;
+    }
+
+    /** 돈을 쌓는다. int 끝(약 21억)을 넘으면 넘치지 않고 그 값에서 멈춘다. */
+    public void gainMoney(int amount) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("money must be >= 0: " + amount);
+        }
+        this.money = (int) Math.min(Integer.MAX_VALUE, (long) money + amount);
     }
 
     public void gainExp(int amount) {

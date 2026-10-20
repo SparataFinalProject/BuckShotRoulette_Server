@@ -44,6 +44,11 @@ class DevStreakTimelineTest {
     }
 
     static Played play(long seed) {
+        return play(seed, com.buckshot.streak.StreakSeason.SEASON_1.items());
+    }
+
+    /** items: 지급할 아이템 (시즌 구성). */
+    static Played play(long seed, List<String> pool) {
         StreakService streakService = mock(StreakService.class);
         GameSummary[] summary = new GameSummary[1];
         Timeline[] timeline = new Timeline[1];
@@ -54,7 +59,12 @@ class DevStreakTimelineTest {
         });
         PacketSender sender = mock(PacketSender.class);
         Deque<Runnable> tasks = new ArrayDeque<>();
-        DevStreakGame game = new DevStreakGame(USER, streakService, (task, delayMs) -> tasks.add(task));
+        DevStreakGame game = new DevStreakGame(USER, streakService, (task, delayMs) -> tasks.add(task)) {
+            @Override
+            public List<String> itemPool() {
+                return pool;
+            }
+        };
         DevGameRoom room = new DevGameRoom(sender, USER, DEALER, game, new Random(seed));
         game.attach(room);
         Random human = new Random(seed * 31 + 7);   // 사람 쪽은 무작위로 아이템을 쓰거나 쏜다
@@ -91,12 +101,14 @@ class DevStreakTimelineTest {
     @DisplayName("고정 시드 여러 판: 장전·차례·사격·피해·hp·아이템이 실제 진행·GameSummary와 맞는다")
     void timelineMatchesGame() {
         boolean sawCuffSkip = false, sawDealerPeek = false, sawBeerReload = false, sawDoubleDamage = false;
+        boolean sawInvert = false, sawPhone = false, sawDealerPhone = false, sawMedicine = false, sawInvertedFire = false;
 
+        for (com.buckshot.streak.StreakSeason season : com.buckshot.streak.StreakSeason.values())
         for (long seed = 1; seed <= SEEDS; seed++) {
-            Played p = play(seed);
+            Played p = play(seed, season.items());
             Timeline t = p.timeline();
             GameSummary s = p.summary();
-            String msg = "seed " + seed;
+            String msg = season + " seed " + seed;
 
             assertEquals(t, TimelineJson.read(TimelineJson.write(t)), msg + " JSON 왕복");
 
@@ -123,7 +135,9 @@ class DevStreakTimelineTest {
                 assertEquals(comp[0] + comp[1], round.shells().length(), msg + " 탄 수");
                 assertEquals(comp[1], round.shells().chars().filter(c -> c == '1').count(), msg + " 실탄 수");
 
-                StringBuilder consumed = new StringBuilder();   // 사격·맥주로 빠진 탄
+                // 지금 실제 탄: 장전 순서에서 시작해 인버터(INV)가 바꾼다
+                int[] actual = round.shells().chars().map(c -> c - '0').toArray();
+                int consumed = 0;                               // 사격·맥주로 빠진 탄 수 = 약실 위치
                 for (Timeline.Turn turn : round.turns()) {
                     boolean me = Timeline.ME.equals(turn.who());
                     if (Boolean.TRUE.equals(turn.cuffSkip())) sawCuffSkip = true;
@@ -131,7 +145,9 @@ class DevStreakTimelineTest {
                     for (Timeline.Act a : turn.acts()) {
                         switch (a.k()) {
                             case Timeline.Act.FIRE -> {
-                                consumed.append(a.s());
+                                assertEquals(actual[consumed], (int) a.s(), msg + " 사격 탄");
+                                if (actual[consumed] != round.shells().charAt(consumed) - '0') sawInvertedFire = true;
+                                consumed++;
                                 boolean self = Timeline.Act.SELF.equals(a.tgt());
                                 assertEquals(a.s() == 1 ? (saw ? 2 : 1) : 0, (int) a.d(), msg + " 피해");
                                 if (a.d() == 2) sawDoubleDamage = true;
@@ -145,14 +161,37 @@ class DevStreakTimelineTest {
                                     if (self == (a.s() == 0)) myCorrect++;
                                 }
                             }
-                            case Timeline.Act.BEER -> consumed.append(a.s());
+                            case Timeline.Act.BEER -> {
+                                assertEquals(actual[consumed], (int) a.s(), msg + " 맥주 탄");
+                                consumed++;
+                            }
                             case Timeline.Act.SAW -> saw = true;
                             case Timeline.Act.CIG -> hp[me ? 0 : 1] = Math.min(GameRules.STREAK_HP, hp[me ? 0 : 1] + 1);
+                            case Timeline.Act.MED -> {
+                                sawMedicine = true;
+                                int d = a.d();
+                                assertTrue(d == -1 || (d >= 0 && d <= 2), msg + " 상한 약 hp 변화 " + d);
+                                hp[me ? 0 : 1] = Math.max(0, Math.min(GameRules.STREAK_HP, hp[me ? 0 : 1] + d));
+                            }
                             case Timeline.Act.MAG -> {
                                 assertNotNull(a.saw(), msg);
-                                assertEquals(round.shells().charAt(consumed.length()) - '0', (int) a.saw(), msg + " 돋보기");
+                                assertEquals(actual[consumed], (int) a.saw(), msg + " 돋보기");
                                 if (me) myPeeks++;
                                 else sawDealerPeek = true;
+                            }
+                            case Timeline.Act.PHONE -> {
+                                if (me) myPeeks++;   // 볼 탄이 없어도 SHELL_REVEALED는 간다
+                                if (a.saw() != null) {
+                                    assertTrue(a.at() >= 1 && consumed + a.at() < actual.length, msg + " 대포폰 위치");
+                                    assertEquals(actual[consumed + a.at()], (int) a.saw(), msg + " 대포폰");
+                                    sawPhone = true;
+                                    if (!me) sawDealerPhone = true;
+                                }
+                            }
+                            case Timeline.Act.INV -> {
+                                assertEquals(1 - actual[consumed], (int) a.s(), msg + " 인버터는 약실을 반대로");
+                                actual[consumed] = a.s();
+                                sawInvert = true;
                             }
                             default -> { }
                         }
@@ -160,10 +199,8 @@ class DevStreakTimelineTest {
                     }
                 }
                 boolean last = ri == t.rounds().size() - 1;
-                if (last) {
-                    assertTrue(round.shells().startsWith(consumed.toString()), msg + " 마지막 라운드");
-                } else {
-                    assertEquals(round.shells(), consumed.toString(), msg + " 라운드 " + round.r() + " 탄 순서");
+                if (!last) {
+                    assertEquals(round.shells().length(), consumed, msg + " 라운드 " + round.r() + " 탄을 다 썼다");
                     List<Timeline.Act> lastActs = round.turns().getLast().acts();
                     if (Timeline.Act.BEER.equals(lastActs.getLast().k())) sawBeerReload = true;
                 }
@@ -194,6 +231,11 @@ class DevStreakTimelineTest {
         }
 
         assertTrue(sawCuffSkip, "수갑으로 이어진 차례가 한 번도 없었다");
+        assertTrue(sawInvert && sawInvertedFire, "인버터로 뒤집힌 탄을 쏜 판이 없었다");
+        assertTrue(sawPhone && sawDealerPhone, "대포폰으로 탄을 본 판이 없었다 (사람·딜러)");
+        if (GameRules.STREAK_HP - 2 >= com.buckshot.game.ai.DealerTuning.HARD.medicineMinHp() - 1) {
+            assertTrue(sawMedicine, "상한 약을 쓴 판이 없었다");
+        }
         assertTrue(sawDealerPeek, "딜러 돋보기가 한 번도 없었다");
         assertTrue(sawBeerReload, "맥주로 탄이 비어 재장전된 판이 없었다");
         assertTrue(sawDoubleDamage, "쇠톱 2배 피해가 없었다");
@@ -230,6 +272,9 @@ class DevStreakTimelineTest {
             case Timeline.Act.MAG -> Item.MAGNIFIER;
             case Timeline.Act.CIG -> Item.CIGARETTE;
             case Timeline.Act.SAW -> Item.SAW;
+            case Timeline.Act.INV -> Item.INVERTER;
+            case Timeline.Act.PHONE -> Item.BURNER_PHONE;
+            case Timeline.Act.MED -> Item.EXPIRED_MEDICINE;
             default -> throw new IllegalArgumentException(kind);
         };
     }

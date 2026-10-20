@@ -85,14 +85,14 @@ class RankedMatchFlowTest {
     }
 
     @Test
-    @DisplayName("랭크 매칭: 끝나면 Elo가 반영되고 GAME_OVER에 두 사람의 레이팅 변화가 담긴다")
+    @DisplayName("랭크 매칭: 끝나면 레이팅이 반영되고 GAME_OVER에 두 사람의 레이팅 변화가 담긴다 (시작하자마자 나가면 나간 사람만 깎임)")
     void rankedGameAppliesRating() {
-        when(rating.applyResult(2L, 1L)).thenReturn(new RatingService.RatedResult(
-                new RatingService.Change(2L, 1, 0, 16, 1016),
+        when(rating.applyEarlyLeave(2L, 1L)).thenReturn(new RatingService.RatedResult(
+                new RatingService.Change(2L, 0, 0, 0, 1000),
                 new RatingService.Change(1L, 0, 1, -16, 984)));
 
         startGame("RANKED");
-        dev.onDisconnected(new UserDisconnectedEvent(1L));   // 1번이 나가면 2번 승리
+        dev.onDisconnected(new UserDisconnectedEvent(1L));   // 1번이 나가면 2번 승리 (5턴 전이라 2번은 레이팅이 오르지 않는다)
 
         GameOverPacket packet = gameOverTo(2L);
         assertEquals(2L, packet.winnerUserId());
@@ -100,8 +100,9 @@ class RankedMatchFlowTest {
         assertTrue(packet.recorded());
         assertEquals(2, packet.results().length);
         assertEquals(2L, packet.results()[0].userId());
-        assertEquals(16, packet.results()[0].ratingDelta());
-        assertEquals(1016, packet.results()[0].rating());
+        assertEquals(0, packet.results()[0].ratingDelta());
+        assertEquals(1000, packet.results()[0].rating());
+        verify(rating, never()).applyResult(anyLong(), anyLong());
         assertEquals(1L, packet.results()[1].userId());
         assertEquals(-16, packet.results()[1].ratingDelta());
         assertEquals(984, packet.results()[1].rating());

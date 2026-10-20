@@ -51,6 +51,7 @@ public class DevRoomService {
         final String code;
         boolean friendsOnly;
         boolean fourPlayer;   // 3~4인 전용
+        int rounds = MultiGameService.ROUNDS;   // 3~4인 전용에서 진행할 라운드 수 (방장이 1~3으로 정한다)
         boolean playing;      // 3~4인 전용 게임 중 (목록에 안 보이고 참가·설정·시작을 받지 않는다). 게임이 끝나면 같은 사람끼리 다시 열린다
         final List<Member> members = new ArrayList<>();   // [0]이 방장
 
@@ -158,6 +159,18 @@ public class DevRoomService {
         broadcastList();
     }
 
+    /** 3~4인 방의 라운드 수 정하기 (방장만, 1~3으로 맞춘다). 클라이언트의 대기를 풀어 주려고 바뀌지 않아도 현재 상태를 다시 보낸다 */
+    public synchronized void setRounds(long userId, int rounds) {
+        Room room = roomByUser.get(userId);
+        if (room == null || room.playing || room.hostId() != userId) return;
+        int clamped = Math.max(MultiGameService.MIN_ROUNDS, Math.min(MultiGameService.ROUNDS, rounds));
+        if (room.rounds != clamped) {
+            room.rounds = clamped;
+            log.info("[dev] room rounds code={} rounds={}", room.code, clamped);
+        }
+        sendState(room);
+    }
+
     public synchronized void kick(long userId, long targetId) {
         Room room = roomByUser.get(userId);
         if (room == null || room.playing || room.hostId() != userId || targetId == userId || roomByUser.get(targetId) != room) return;
@@ -194,7 +207,7 @@ public class DevRoomService {
         }
         if (fourPlayer) {
             var start = new DevRoomPackets.StartMulti(players);
-            multiGameService.create(players, () -> onMultiGameEnded(started));
+            multiGameService.create(players, started.rounds, () -> onMultiGameEnded(started));
             for (Member m : players) packetSender.sendTo(m.userId(), PacketType.ROOM_START_MULTI, start);
             return;
         }
@@ -258,7 +271,7 @@ public class DevRoomService {
     }
 
     private static DevRoomPackets.State state(Room room) {
-        return new DevRoomPackets.State(room.id, room.code, room.friendsOnly, room.hostId(), List.copyOf(room.members), room.maxMembers());
+        return new DevRoomPackets.State(room.id, room.code, room.friendsOnly, room.hostId(), List.copyOf(room.members), room.maxMembers(), room.rounds);
     }
 
     private void fail(long userId, String reason) {

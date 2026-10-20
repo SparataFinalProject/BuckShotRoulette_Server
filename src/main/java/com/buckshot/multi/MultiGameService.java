@@ -1,6 +1,7 @@
 package com.buckshot.multi;
 
 import com.buckshot.devtest.DevRoomPackets.Member;
+import com.buckshot.level.LevelPolicy;
 import com.buckshot.multi.MultiPackets.ChatMessage;
 import com.buckshot.multi.MultiPackets.ItemGrabbed;
 import com.buckshot.multi.MultiPackets.ItemPhaseBegin;
@@ -18,9 +19,11 @@ import com.buckshot.multi.MultiPackets.Shot;
 import com.buckshot.multi.MultiPackets.ShotgunDropped;
 import com.buckshot.multi.MultiPackets.ShotgunPicked;
 import com.buckshot.multi.MultiPackets.Turn;
+import com.buckshot.reward.RewardService;
 import com.buckshot.ws.PacketSender;
 import com.buckshot.ws.packet.PacketType;
 import com.buckshot.ws.session.UserDisconnectedEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -57,7 +60,8 @@ public class MultiGameService {
     static final int LOAD_DELAY_SEC = 2;            // 모두 아이템 받기를 끝내고 장전이 시작하기까지 (원작 2초)
     static final int READY_TIMEOUT_SEC = 20;
     static final int INTRO_TIMEOUT_SEC = 40;
-    static final int ROUNDS = 1;                    // [TEST] 원래 3. 원작 라운드 수 (0~2)
+    public static final int ROUNDS = 3;                    // 기본 라운드 수 = 원작 라운드 수 (0~2). 방장이 1~3으로 바꿀 수 있다
+    public static final int MIN_ROUNDS = 1;
     static final int[] ROUND_CASH = {70000, 75000, 80000};   // 원작 WinRoutine: 라운드 0~2 승자 상금 (결과 화면 "최고 자산가")
     static final int CHAT_MAX_LENGTH = 100;         // 채팅 한 줄 최대 글자 수
     static final long CHAT_MIN_INTERVAL_MS = 500;   // 도배 방지: 한 사람이 이 시간 안에 또 보낸 채팅은 버린다
@@ -71,12 +75,12 @@ public class MultiGameService {
             double winSec, double nextRoundItemSec, double itemUseScale, double removerSec) {
         /**
          * loadToTurn: 장전 패킷 뒤 셸 순서를 보여 주고(0.7+5+1.7) 첫 차례로 카메라가 가기까지(0.2+0.9). turnStart: 차례 패킷 뒤 카메라가 도착하기까지.
-         * turnTimeout 20: 원작 MAIN_timeout_duration_turn. targetTimeout 10: 총을 든 뒤 대상 고르기(원작 _shotgun_target_selection 21초는 길어서 줄임). shot 3.8: 쏘는 연출(1인칭 3.6+0.2, 3인칭 0.25+1.9+1.65).
+         * turnTimeout 80: 원작 MAIN_timeout_duration_turn 20초 + 처음 하는 사람이 아이템을 고민할 1분. targetTimeout 10: 총을 든 뒤 대상 고르기(원작 _shotgun_target_selection 21초는 길어서 줄임). shot 3.8: 쏘는 연출(1인칭 3.6+0.2, 3인칭 0.25+1.9+1.65).
          * drop: 총을 내려놓는 연출. win 9.3: 원작 WinRoutine(0.5+2+6.4+0.4). nextRoundItem: 새 라운드 표시·체력·번개를 다시 켜고 아이템 받기까지(추정)
          * itemUseScale: ITEM_USE_SEC와 재머·아드레날린 고르기 시간에 곱한다 (원작 1)
          * remover 3.5: 지난 라운드 아이템이 남아 있으면 원작 ClearUserInventories(아이템 수거기)가 끝나기를 기다리는 시간
          */
-        static final Timing ORIGINAL = new Timing(8.5, 1.1, 20, 10, 3.8, 1.0, 9.3, 6.0, 1.0, 3.5);
+        static final Timing ORIGINAL = new Timing(8.5, 1.1, 80, 10, 3.8, 1.0, 9.3, 6.0, 1.0, 3.5);
     }
 
     enum Phase {
@@ -127,6 +131,7 @@ public class MultiGameService {
 
     private final PacketSender packetSender;
     private final Random random = new Random();
+    private RewardService rewardService;   // 라운드가 끝나면 이긴 사람에게 돈과 경험치를 쌓는다 (없으면 쌓지 않음: 테스트)
     Timing timing = Timing.ORIGINAL;
 
     private static final class Seat {
@@ -167,7 +172,9 @@ public class MultiGameService {
         boolean itemPhase;     // MULTI_ITEM_PHASE_BEGIN을 보냄
         boolean loadScheduled; // 모두 아이템 받기를 끝내 장전을 예약함
         boolean over;
+        boolean finalRoundSent;                            // 마지막 MULTI_ROUND_END를 보냄 (곧 endGame)
         Runnable onEnded;                                  // 마지막 라운드까지 끝났을 때 (endGame)
+        int rounds = ROUNDS;                               // 이 방이 진행할 라운드 수 (방장이 정한다)
         ShellDeck deck;                                   // 셸 묶음 뽑기 (게임 내내 이어진다)
         boolean[] shotgun = new boolean[0];                // 총 속의 실제 셸 순서 (true = 실탄). 서버만 안다
         int firstTurnSeat;                                 // 이번 라운드 선공 (원작 MAIN_active_first_turn_socket)
@@ -195,8 +202,14 @@ public class MultiGameService {
 
     /** onEnded: 마지막 라운드까지 끝나 게임이 정리될 때 한 번 부른다 (방을 다시 열 때, DevRoomService) */
     public void create(List<Member> players, Runnable onEnded) {
+        create(players, ROUNDS, onEnded);
+    }
+
+    /** rounds: 진행할 라운드 수 (MIN_ROUNDS~ROUNDS로 맞춘다). 이 라운드를 마치면 게임이 끝난다 */
+    public void create(List<Member> players, int rounds, Runnable onEnded) {
         Game game = new Game();
         game.onEnded = onEnded;
+        game.rounds = Math.max(MIN_ROUNDS, Math.min(ROUNDS, rounds));
         for (Member m : players) game.seats.add(new Seat(m.userId()));
         game.deck = new ShellDeck(players.size(), random);
         synchronized (this) {
@@ -318,6 +331,18 @@ public class MultiGameService {
         seat.jammed = false;
         broadcast(game, PacketType.MULTI_PLAYER_LEFT, new PlayerLeft(idx));
         boolean holdingGun = seat.holdingShotgun;
+        seat.holdingShotgun = false;
+        // 혼자 남으면 남은 라운드를 하지 않고 그 사람의 승리로 게임을 끝낸다 (아이템 받기·장전 중이어도 기다리지 않는다)
+        int last = lastRemainingSeat(game);
+        if (last != -1) {
+            // 시작 전(모두 준비되기 전)이면 라운드를 하지 않고 상금 없이 결과만 보낸다
+            if (!game.started || game.phase == Phase.ROUND_END) {
+                if (!game.finalRoundSent) concludeEarly(game, last);
+            } else {
+                roundEnd(game, last);
+            }
+            return;
+        }
         if (!game.started && game.seats.stream().allMatch(s -> s.ready)) startRound(game);
         else if (game.started && !game.itemPhase && game.phase == Phase.ITEMS && game.seats.stream().allMatch(s -> s.introDone)) beginItemPhase(game);
         else if (game.phase == Phase.ITEMS && game.itemPhase) checkItemPhaseOver(game);
@@ -331,13 +356,12 @@ public class MultiGameService {
                 else beginTurn(game, nextTurn(game.turnSeat, alive(game), game.turnCw), true, "timeout");
             }
         }
-        seat.holdingShotgun = false;
     }
 
     // ───── 단계 ─────
 
     private synchronized void startRound(Game game) {
-        if (game.started || game.over) return;
+        if (game.started || game.over || game.finalRoundSent) return;   // 시작 전에 혼자 남아 이미 끝났으면 뒤늦은 READY로 시작하지 않는다
         game.started = true;
         int n = game.seats.size();
         game.firstTurnSeat = pickFirstTurn(connected(game), game.firstDeadSeat, random);
@@ -395,7 +419,7 @@ public class MultiGameService {
     }
 
     private synchronized void beginItemPhase(Game game) {
-        if (game.itemPhase || game.over) return;
+        if (game.itemPhase || game.over || game.finalRoundSent) return;
         game.itemPhase = true;
         game.phase = Phase.ITEMS;
         game.token++;
@@ -832,14 +856,45 @@ public class MultiGameService {
     private void roundEnd(Game game, int winner) {
         game.token++;
         game.phase = Phase.ROUND_END;
-        boolean finalRound = game.round >= ROUNDS - 1;
+        // 혼자 남았으면(나머지가 모두 나감) 라운드가 남아 있어도 마지막 라운드다
+        boolean finalRound = game.round >= game.rounds - 1 || lastRemainingSeat(game) != -1;
+        game.finalRoundSent = finalRound;
         // 원작 WinRoutine: 이긴 사람에게 라운드 상금
-        if (winner >= 0 && winner < game.seats.size()) game.seats.get(winner).cash += ROUND_CASH[Math.min(game.round, ROUND_CASH.length - 1)];
+        if (winner >= 0 && winner < game.seats.size()) {
+            Seat winnerSeat = game.seats.get(winner);
+            int cash = ROUND_CASH[Math.min(game.round, ROUND_CASH.length - 1)];
+            winnerSeat.cash += cash;
+            payRound(winnerSeat, cash);
+        }
         MatchResults results = finalRound ? matchResults(game) : null;
         log.info("[multi] round {} end winner={} final={} results={}", game.round, winner, finalRound, results);
         broadcast(game, PacketType.MULTI_ROUND_END, new RoundEnd(winner, game.round, finalRound, results));
         if (finalRound) later(game, timing.winSec(), () -> endGame(game));
         else later(game, timing.winSec(), () -> nextRound(game));
+    }
+
+    /**
+     * 라운드 승리 연출 중(다음 라운드 전)에 나머지가 모두 나갔을 때: 다음 라운드를 취소하고 결과를 담은 마지막 라운드 끝을 보낸다.
+     * 이 라운드의 상금은 이미 줬으므로 다시 주지 않는다.
+     */
+    private void concludeEarly(Game game, int winner) {
+        game.token++;
+        game.finalRoundSent = true;
+        MatchResults results = matchResults(game);
+        log.info("[multi] round {} conclude early winner={} results={}", game.round, winner, results);
+        broadcast(game, PacketType.MULTI_ROUND_END, new RoundEnd(winner, game.round, true, results));
+        later(game, timing.winSec(), () -> endGame(game));
+    }
+
+    /** 나가지 않은 자리가 하나면 그 자리, 아니면 -1 */
+    private static int lastRemainingSeat(Game game) {
+        int found = -1;
+        for (int i = 0; i < game.seats.size(); i++) {
+            if (game.seats.get(i).left) continue;
+            if (found != -1) return -1;
+            found = i;
+        }
+        return found;
     }
 
     /**
@@ -867,11 +922,32 @@ public class MultiGameService {
         return highest && value == 0 ? -1 : found;
     }
 
+    @Autowired
+    public void setRewardService(RewardService rewardService) {
+        this.rewardService = rewardService;
+    }
+
     private void endGame(Game game) {
         game.over = true;
         for (Seat s : game.seats) gameByUser.remove(s.userId, game);
         // 이 잠금 밖에서 부른다 (방 서비스가 자기 잠금을 잡는다)
         if (game.onEnded != null) TIMER.execute(game.onEnded);
+    }
+
+    /**
+     * 라운드를 이긴 자리에게 상금과 경험치를 바로 계정에 쌓는다 (돈가방 연출이 끝나기를 기다리지 않으므로 그 사이 나가도 받는다).
+     * DB를 쓰므로 이 잠금 밖(TIMER)에서 한다.
+     */
+    private void payRound(Seat winner, int cash) {
+        if (rewardService == null) return;
+        long userId = winner.userId;
+        TIMER.execute(() -> {
+            try {
+                rewardService.reward(userId, cash, LevelPolicy.roundWinExp());
+            } catch (RuntimeException e) {
+                log.warn("[multi] 라운드 보상 실패 userId={} cash={}", userId, cash, e);
+            }
+        });
     }
 
     /** 테스트용: 자리 칸에 아이템을 놓아 둔다 */

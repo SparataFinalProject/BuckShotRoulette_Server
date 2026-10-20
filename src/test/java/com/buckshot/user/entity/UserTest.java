@@ -122,4 +122,19 @@ class UserTest {
         assertThrows(IllegalArgumentException.class, () -> user.gainExp(-1));
         assertEquals(10, user.getExp());
     }
+
+    @Test
+    @DisplayName("다른 시즌의 도전이 오면 지난 시즌 최고 기록은 비교하지 않고 새로 쌓는다")
+    void newSeasonResetsBest() {
+        User user = new User("hash", 1000);
+        user.offerBest(runOf(5, 10), first);   // 시즌 1에 5연승
+        assertEquals(5, user.bestStreakIn(1));
+
+        StreakRun season2 = new StreakRun(1L, 2, first);
+        season2.recordWin(new GameSummary(10, 5, 4, 1, 3, Map.of()));
+        assertTrue(user.offerBest(season2, first), "1연승이어도 시즌 2 첫 기록");
+        assertEquals(1, user.getBestStreak());
+        assertEquals(2, user.bestSeasonNumber());
+        assertEquals(0, user.bestStreakIn(1), "시즌 1 기록은 리더보드에서 가려진다");
+    }
 }

@@ -31,7 +31,7 @@ public record StreakRunDetail(RunSummary run, List<GameRow> games, Overall overa
                     StatMath.percent(run.getCorrectShots(), run.getShots()),
                     run.getDamageTaken(),
                     run.getStartedAt(), run.getEndedAt(),
-                    StatMath.allItems(run.getItemUsage()));
+                    StatMath.allItems(run.getSeason(), run.getItemUsage()));
         }
     }
 
@@ -45,7 +45,7 @@ public record StreakRunDetail(RunSummary run, List<GameRow> games, Overall overa
                     game.getGameIndex(), game.getResult(), game.getTurns(), game.getHpLeft(),
                     game.getDamageTaken(),
                     StatMath.percent(game.getCorrectShots(), game.getShots()),
-                    StatMath.allItems(game.getItemUsage()),
+                    StatMath.allItems(game.seasonNumber(), game.getItemUsage()),
                     game.getEndedAt());
         }
     }

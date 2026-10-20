@@ -34,6 +34,24 @@ public class RatingService {
         return new RatedResult(change(winner, winnerDelta), change(loser, loserDelta));
     }
 
+    /**
+     * 판 초반(5턴 미만)에 상대가 나갔을 때: 나간 사람만 평소에 진 것처럼 레이팅을 잃고 패가 하나 는다.
+     * 남은 사람은 레이팅·승패가 그대로다.
+     *
+     * @throws BusinessException 두 사람 중 한 명이라도 없을 때
+     */
+    @Transactional
+    public RatedResult applyEarlyLeave(long stayerId, long leaverId) {
+        List<User> users = userRepository.findAllByIdForUpdate(List.of(stayerId, leaverId));
+        User stayer = pick(users, stayerId);
+        User leaver = pick(users, leaverId);
+
+        int loss = EloCalculator.winnerGain(stayer.getRating(), leaver.getRating());
+        int leaverDelta = leaver.applyRankedResult(false, -loss);
+
+        return new RatedResult(change(stayer, 0), change(leaver, leaverDelta));
+    }
+
     private static User pick(List<User> users, long id) {
         return users.stream()
                 .filter(u -> u.getId() == id)

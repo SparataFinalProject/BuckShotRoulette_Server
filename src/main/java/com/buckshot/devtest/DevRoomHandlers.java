@@ -39,6 +39,12 @@ public class DevRoomHandlers {
     }
 
     @Bean
+    PacketHandler<DevRoomPackets.SetRounds> roomRoundsHandler(DevRoomService rooms) {
+        return handler(PacketType.ROOM_SET_ROUNDS, DevRoomPackets.SetRounds.class,
+                (ctx, d) -> rooms.setRounds(ctx.userId(), d.rounds()));
+    }
+
+    @Bean
     PacketHandler<DevRoomPackets.Kick> roomKickHandler(DevRoomService rooms) {
         return handler(PacketType.ROOM_KICK, DevRoomPackets.Kick.class, (ctx, d) -> rooms.kick(ctx.userId(), d.userId()));
     }

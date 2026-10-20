@@ -1,6 +1,7 @@
 package com.buckshot.ranking.dto;
 
 import com.buckshot.game.Item;
+import com.buckshot.streak.StreakSeason;
 import java.util.EnumMap;
 import java.util.Map;
 
@@ -20,12 +21,14 @@ public final class StatMath {
         return ratio(part * 100, whole);
     }
 
-    /** 아이템 5종을 모두 채운다. 저장은 쓴 것만 했으므로 안 쓴 아이템은 0. */
-    public static Map<Item, Integer> allItems(Map<Item, Integer> used) {
+    /** 그 시즌에 나오는 아이템(StreakSeason.items)을 모두 채운다. 저장은 쓴 것만 했으므로 안 쓴 아이템은 0. */
+    public static Map<Item, Integer> allItems(int season, Map<Item, Integer> used) {
         Map<Item, Integer> all = new EnumMap<>(Item.class);
-        for (Item item : Item.values()) {
+        for (String type : StreakSeason.of(season).items()) {
+            Item item = Item.valueOf(type);
             all.put(item, used.getOrDefault(item, 0));
         }
+        used.forEach((item, n) -> all.putIfAbsent(item, n));   // 목록 밖이라도 쓴 기록이 있으면 그대로 보여 준다
         return all;
     }
 }

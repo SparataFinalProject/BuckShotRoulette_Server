@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyIterable;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -17,6 +18,7 @@ import com.buckshot.ranking.dto.RankingEntry;
 import com.buckshot.ranking.dto.RankingResponse;
 import com.buckshot.ranking.dto.StreakStats;
 import com.buckshot.streak.GameSummary;
+import com.buckshot.streak.StreakSeason;
 import com.buckshot.streak.entity.StreakRun;
 import com.buckshot.streak.repository.StreakRunRepository;
 import com.buckshot.user.entity.User;
@@ -54,6 +56,27 @@ class RankingServiceTest {
         User user = new User("hash" + id, rating);
         ReflectionTestUtils.setField(user, "id", id);
         return user;
+    }
+
+    @Test
+    @DisplayName("돈 탭: 돈이 같으면 같은 순위, 내 순위는 나보다 많은 사람 수 + 1")
+    void moneyTopHasSharedRanks() {
+        User a = user(1L, 1000);
+        User b = user(2L, 1000);
+        User c = user(3L, 1000);
+        ReflectionTestUtils.setField(a, "money", 210000);
+        ReflectionTestUtils.setField(b, "money", 70000);
+        ReflectionTestUtils.setField(c, "money", 70000);
+        when(userRepository.findById(3L)).thenReturn(Optional.of(c));
+        when(userRepository.findTop50ByOrderByMoneyDescIdAsc()).thenReturn(List.of(a, b, c));
+        when(userRepository.countByMoneyGreaterThan(70000)).thenReturn(1L);
+
+        RankingResponse response = service.ranking(RankingType.MONEY, 3L);
+
+        assertEquals(List.of(1, 2, 2), response.top().stream().map(RankingEntry::rank).toList());
+        assertEquals(210000, response.top().get(0).score());
+        assertEquals(2, response.me().rank());
+        assertEquals(70000, response.me().score());
     }
 
     @Test
@@ -185,7 +208,7 @@ class RankingServiceTest {
     /** wins번, 판마다 turnsPerWin턴·사격 shots·맞는 판단 correct로 이겨서 최고 기록을 세운 유저. 도전 id는 100 + 유저 id. */
     private User streakUser(long id, int wins, int turnsPerWin, int shots, int correct) {
         User user = user(id, 1000);
-        StreakRun run = new StreakRun(id, 1, AT);
+        StreakRun run = new StreakRun(id, StreakSeason.CURRENT.number(), AT);
         ReflectionTestUtils.setField(run, "id", 100 + id);
         for (int i = 0; i < wins; i++) {
             run.recordWin(new GameSummary(turnsPerWin, shots, correct, 1, 3, Map.of()));
@@ -212,9 +235,9 @@ class RankingServiceTest {
         User fast = streakUser(1L, 5, 6);   // 30턴
         User slow = streakUser(2L, 5, 8);   // 40턴
         givenMe(slow);
-        when(userRepository.findStreakTop(any(Pageable.class))).thenReturn(List.of(fast, slow));
+        when(userRepository.findStreakTop(eq(StreakSeason.CURRENT.number()), any(Pageable.class))).thenReturn(List.of(fast, slow));
         when(runRepository.findAllById(anyIterable())).thenReturn(runs);
-        when(userRepository.countBetterStreak(5, 40)).thenReturn(1L);
+        when(userRepository.countBetterStreak(StreakSeason.CURRENT.number(), 5, 40)).thenReturn(1L);
 
         RankingResponse response = service.ranking(RankingType.STREAK, 2L);
 
@@ -224,15 +247,30 @@ class RankingServiceTest {
     }
 
     @Test
+    @DisplayName("연승 탭은 지금 시즌 정보(번호, 이름, 아이템)를 같이 준다. 다른 탭은 null")
+    void streakTabCarriesSeason() {
+        User me = streakUser(1L, 5, 6);
+        givenMe(me);
+        when(userRepository.findStreakTop(eq(StreakSeason.CURRENT.number()), any(Pageable.class))).thenReturn(List.of(me));
+        when(runRepository.findAllById(anyIterable())).thenReturn(runs);
+
+        RankingResponse response = service.ranking(RankingType.STREAK, 1L);
+
+        assertEquals(StreakSeason.CURRENT.number(), response.season().number());
+        assertEquals(StreakSeason.CURRENT.title(), response.season().title());
+        assertEquals(StreakSeason.CURRENT.items(), response.season().items());
+    }
+
+    @Test
     @DisplayName("연승과 턴이 모두 같으면 공동 순위, 다음 사람은 건너뛴다 (1, 1, 3)")
     void streakSameRecordSharesRank() {
         User a = streakUser(1L, 5, 6);   // 5승 30턴
         User b = streakUser(2L, 5, 6);   // 5승 30턴
         User c = streakUser(3L, 4, 5);   // 4승 20턴
         givenMe(c);
-        when(userRepository.findStreakTop(any(Pageable.class))).thenReturn(List.of(a, b, c));
+        when(userRepository.findStreakTop(eq(StreakSeason.CURRENT.number()), any(Pageable.class))).thenReturn(List.of(a, b, c));
         when(runRepository.findAllById(anyIterable())).thenReturn(runs);
-        when(userRepository.countBetterStreak(4, 20)).thenReturn(2L);
+        when(userRepository.countBetterStreak(StreakSeason.CURRENT.number(), 4, 20)).thenReturn(2L);
 
         RankingResponse response = service.ranking(RankingType.STREAK, 3L);
 
@@ -246,13 +284,13 @@ class RankingServiceTest {
     void noStreakHasNullRank() {
         User me = user(1L, 1000);
         when(userRepository.findById(1L)).thenReturn(Optional.of(me));
-        when(userRepository.findStreakTop(any(Pageable.class))).thenReturn(List.of());
+        when(userRepository.findStreakTop(eq(StreakSeason.CURRENT.number()), any(Pageable.class))).thenReturn(List.of());
 
         RankingEntry entry = service.ranking(RankingType.STREAK, 1L).me();
 
         assertNull(entry.rank());
         assertEquals(0, entry.score());
-        verify(userRepository, never()).countBetterStreak(anyInt(), anyInt());
+        verify(userRepository, never()).countBetterStreak(anyInt(), anyInt(), anyInt());
     }
 
     @Test
@@ -260,7 +298,7 @@ class RankingServiceTest {
     void streakStatsCalculated() {
         User me = streakUser(1L, 7, 12, 3, 2);   // 7승, 판마다 12턴·사격 3·맞음 2·피해 1
         givenMe(me);
-        when(userRepository.findStreakTop(any(Pageable.class))).thenReturn(List.of(me));
+        when(userRepository.findStreakTop(eq(StreakSeason.CURRENT.number()), any(Pageable.class))).thenReturn(List.of(me));
         when(runRepository.findAllById(anyIterable())).thenReturn(runs);
 
         StreakStats stats = service.ranking(RankingType.STREAK, 1L).top().get(0).streak();
@@ -278,7 +316,7 @@ class RankingServiceTest {
     void noShotsAccuracyIsZero() {
         User me = streakUser(1L, 1, 5, 0, 0);
         givenMe(me);
-        when(userRepository.findStreakTop(any(Pageable.class))).thenReturn(List.of(me));
+        when(userRepository.findStreakTop(eq(StreakSeason.CURRENT.number()), any(Pageable.class))).thenReturn(List.of(me));
         when(runRepository.findAllById(anyIterable())).thenReturn(runs);
 
         StreakStats stats = service.ranking(RankingType.STREAK, 1L).me().streak();

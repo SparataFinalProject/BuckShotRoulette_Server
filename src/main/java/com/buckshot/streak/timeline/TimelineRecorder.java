@@ -13,6 +13,12 @@ public class TimelineRecorder {
     private List<Timeline.Turn> turns;
     private List<Timeline.Act> acts;
     private Timeline.End end;
+    private String dealer;
+
+    /** 딜러 성격 (판 시작 때 한 번). */
+    public void dealer(String styleId) {
+        this.dealer = styleId;
+    }
 
     public void roundLoaded(boolean meFirst, List<String> shells) {
         StringBuilder order = new StringBuilder(shells.size());
@@ -32,7 +38,20 @@ public class TimelineRecorder {
         add(new Timeline.Act(Timeline.Act.FIRE, self ? Timeline.Act.SELF : Timeline.Act.OPP, bit(shell), damage, null));
     }
 
+    /** 원작 5종만 쓰던 형태 (본 위치·인버터·hp 변화 없음). */
     public void itemUsed(String item, String revealedShell, String ejectedShell) {
+        itemUsed(item, revealedShell, ItemType.MAGNIFIER.equals(item) ? 0 : -1, ejectedShell, null, 0);
+    }
+
+    /**
+     * @param revealedShell 쓴 사람이 본 탄 (돋보기·대포폰), 없으면 null
+     * @param revealedIndex 본 위치 (돋보기 0, 대포폰 1부터), 없으면 -1
+     * @param ejectedShell  맥주로 뺀 탄 (아니면 "" 또는 null)
+     * @param invertedTo    인버터로 뒤집힌 뒤 약실 탄 (아니면 null)
+     * @param hpDelta       쓴 사람 hp 변화 (담배·상한 약)
+     */
+    public void itemUsed(String item, String revealedShell, int revealedIndex, String ejectedShell,
+                         String invertedTo, int hpDelta) {
         Timeline.Act act = switch (item) {
             case ItemType.MAGNIFIER -> new Timeline.Act(Timeline.Act.MAG, null, null, null,
                     revealedShell == null ? null : bit(revealedShell));
@@ -40,6 +59,12 @@ public class TimelineRecorder {
                     ejectedShell == null || ejectedShell.isEmpty() ? null : bit(ejectedShell), null, null);
             case ItemType.HANDCUFFS -> simple(Timeline.Act.CUFF);
             case ItemType.CIGARETTE -> simple(Timeline.Act.CIG);
+            case ItemType.INVERTER -> new Timeline.Act(Timeline.Act.INV, null,
+                    invertedTo == null ? null : bit(invertedTo), null, null);
+            case ItemType.BURNER_PHONE -> revealedShell == null || revealedIndex < 1
+                    ? simple(Timeline.Act.PHONE)
+                    : new Timeline.Act(Timeline.Act.PHONE, null, null, null, bit(revealedShell), revealedIndex);
+            case ItemType.EXPIRED_MEDICINE -> new Timeline.Act(Timeline.Act.MED, null, null, hpDelta, null);
             case ItemType.SAW -> simple(Timeline.Act.SAW);
             default -> simple(item);
         };
@@ -51,7 +76,7 @@ public class TimelineRecorder {
     }
 
     public Timeline build() {
-        return new Timeline(VERSION, rounds, end);
+        return new Timeline(VERSION, rounds, end, dealer);
     }
 
     private void add(Timeline.Act act) {
