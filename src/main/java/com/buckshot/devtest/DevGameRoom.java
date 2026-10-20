@@ -50,7 +50,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class DevGameRoom {
 
-    static final int HP = GameRules.MAX_HP;
+    static final int HP = 4;   // 1대1 시작 목숨이자 최대 목숨 (GameRules.MAX_HP 6은 싱글 규칙)
     private static final int SLOT_COUNT = GameRules.MAX_ITEM_SLOTS;
     // 도박 동전은 한 사람이 동시에 1개까지만 (이미 가진 것 + 이번에 뽑은 것). 동전으로 새로 뽑을 때는 동전이 나오지 않는다
     private static final int MAX_COINS_HELD = 1;
