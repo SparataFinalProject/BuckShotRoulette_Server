@@ -80,15 +80,18 @@ public class MultiGameService {
     }
 
     enum Phase {
-        ITEMS, LOADING, TURN, ITEM_USE, ITEM_SECONDARY, JAM_SKIP, TARGETING, DROPPING, SHOOTING, ROUND_END
+        ITEMS, LOADING, TURN, ITEM_USE, ITEM_SECONDARY, COIN_REFILL, JAM_SKIP, TARGETING, DROPPING, SHOOTING, ROUND_END
     }
 
     static final int JAMMER = 3, BURNER_PHONE = 6, ADRENALINE = 8, INVERTER = 9, REMOTE = 10;
+    /** 도박 동전 (싱글·1대1의 GAMBLE_COIN). 원작에 없는 우리 아이템이라 번호를 이어 붙였다. 테이블 전체에 하나만 있다 */
+    static final int GAMBLE_COIN = 11;
 
     // 원작 MP_ItemResource (배분, 한 사람 상한, 테이블 전체 상한). 상한 약(7)은 3~4인 모드에 없다 (싱글·1대1 전용). 다시 넣지 않는다
     private static final List<ItemRule> RULES = List.of(
             new ItemRule(1, 2, 32), new ItemRule(2, 2, 32), new ItemRule(JAMMER, 1, 1), new ItemRule(4, 1, 32), new ItemRule(5, 8, 32),
-            new ItemRule(BURNER_PHONE, 8, 32), new ItemRule(ADRENALINE, 4, 32), new ItemRule(INVERTER, 4, 32), new ItemRule(REMOTE, 1, 2));
+            new ItemRule(BURNER_PHONE, 8, 32), new ItemRule(ADRENALINE, 4, 32), new ItemRule(INVERTER, 4, 32), new ItemRule(REMOTE, 1, 2),
+            new ItemRule(GAMBLE_COIN, 1, 1));
 
     /**
      * 아이템 사용 연출 길이 (원작 1인칭: 테이블에서 집기 0.6 + "use item id N first person" + 끝 0.2). 인덱스는 아이템 번호.
@@ -96,7 +99,12 @@ public class MultiGameService {
      * 재머·아드레날린은 고르기 단계가 있어 따로 센다 (0)
      */
     static final double[] ITEM_USE_SEC = {0, 0.6 + 2.87 + 0.2, 0.6 + 3.85 + 0.2, 0, 0.6 + 3.74 + 0.2, 0.6 + 3.84 + 0.2,
-            0.6 + 3.72 + 0.2, 0, 0, 0.6 + 1.9 + 0.2, 0.6 + 1.6 + 2.7 + 0.2};
+            0.6 + 3.72 + 0.2, 0, 0, 0.6 + 1.9 + 0.2, 0.6 + 1.6 + 2.7 + 0.2,
+            0.6 + 4.0 + 0.2};   // 도박 동전: 집기 0.6 + 슬롯머신 연출과 아이템이 상자로 돌아가기 4.0 + 끝 0.2 (클라이언트 MultiShotgun.CoinUse와 맞춘 값)
+    /** 도박 동전으로 돌려보낸 만큼 다시 받는 시간 제한 (초). 시간이 지나면 못 놓은 것은 상자로 돌아가고 차례가 이어진다 */
+    static final double COIN_REFILL_TIMEOUT_SEC = 25;
+    /** 다 받은 뒤 상자가 닫히고 차례가 이어지기까지 */
+    static final double COIN_REFILL_END_SEC = 0.8;
     /** 훔친 아이템은 0.2초 뒤 카메라가 기본 시점으로 돌아오는 동안(0.6) 집어 와서 조금 늦게 끝난다 (원작 PanCameraBack) */
     static final double STOLEN_EXTRA_SEC = 0.2;
     /** 원작 MAIN_timeout_duration_jammer 12 / _adrenaline 8 + MP_UserTimeout_Branch가 더하는 0.6. 아드레날린은 쓰고 1.2초 뒤부터 센다 */
@@ -218,12 +226,15 @@ public class MultiGameService {
     /** 원작 GrabItemRequest -> GetItemToGrab. 꺼낼 수 있는 아이템이 없으면 그 자리는 끝난다 */
     public synchronized void grabItem(long userId) {
         Game game = gameByUser.get(userId);
-        if (game == null || !game.itemPhase) return;
+        if (game == null) return;
         Seat seat = seat(game, userId);
+        boolean refill = refilling(game, seat);   // 도박 동전으로 돌려보낸 만큼 차례인 사람이 다시 받는 중
+        if (!game.itemPhase && !refill) return;
         if (seat.finished || seat.holding != 0 || seat.placed >= seat.target) return;
-        int itemId = pickItem(game, seat);
+        int itemId = pickItem(game, seat, refill);
         if (itemId == 0) {
-            finish(game, seat, false);
+            if (refill) finishRefill(game, indexOf(game, seat), false);
+            else finish(game, seat, false);
             return;
         }
         seat.holding = itemId;
@@ -232,8 +243,10 @@ public class MultiGameService {
 
     public synchronized void placeItem(long userId, int cell) {
         Game game = gameByUser.get(userId);
-        if (game == null || !game.itemPhase) return;
+        if (game == null) return;
         Seat seat = seat(game, userId);
+        boolean refill = refilling(game, seat);
+        if (!game.itemPhase && !refill) return;
         if (seat.finished || seat.holding == 0 || cell < 0 || cell >= SLOTS || seat.cells[cell] != 0) return;
         int itemId = seat.holding;
         seat.cells[cell] = itemId;
@@ -241,7 +254,15 @@ public class MultiGameService {
         seat.placed++;
         boolean last = seat.placed >= seat.target || seat.placed >= SLOTS;
         broadcast(game, PacketType.MULTI_ITEM_PLACED, new ItemPlaced(indexOf(game, seat), cell, itemId, last));
-        if (last) finish(game, seat, false);
+        if (last) {
+            if (refill) finishRefill(game, indexOf(game, seat), false);
+            else finish(game, seat, false);
+        }
+    }
+
+    /** 도박 동전으로 칸을 비운 차례인 사람이 새 아이템을 받는 중인가 */
+    private static boolean refilling(Game game, Seat seat) {
+        return game.phase == Phase.COIN_REFILL && game.seats.get(game.turnSeat) == seat;
     }
 
     /** 1대1 게임(DevMatchService)의 채팅만 연다. 자리 번호는 userId가 작은 쪽이 0이다 (클라이언트도 같은 규칙으로 찾는다). */
@@ -300,6 +321,7 @@ public class MultiGameService {
         if (!game.started && game.seats.stream().allMatch(s -> s.ready)) startRound(game);
         else if (game.started && !game.itemPhase && game.phase == Phase.ITEMS && game.seats.stream().allMatch(s -> s.introDone)) beginItemPhase(game);
         else if (game.phase == Phase.ITEMS && game.itemPhase) checkItemPhaseOver(game);
+        else if (game.phase == Phase.COIN_REFILL && idx == game.turnSeat) finishRefill(game, idx, true);
         else if (game.phase == Phase.TURN || game.phase == Phase.TARGETING) {
             // 한 명만 남았으면 라운드를 끝낸다. 차례였던 사람이 나갔으면 (총을 들고 있었으면 내려놓고) 넘긴다
             int winner = winnerSeat(game);
@@ -498,7 +520,7 @@ public class MultiGameService {
     private void onTurnTimeout(Game game, int seat) {
         if (game.turnSeat != seat) return;
         // 원작: 아이템을 쓰는 중(재머·아드레날린으로 고르는 중 포함)에 시간이 다 되면 쓰기가 끝난 뒤 넘긴다
-        if (game.phase == Phase.ITEM_USE || game.phase == Phase.ITEM_SECONDARY) {
+        if (game.phase == Phase.ITEM_USE || game.phase == Phase.ITEM_SECONDARY || game.phase == Phase.COIN_REFILL) {
             game.turnExpiredDuringItem = true;
             return;
         }
@@ -608,6 +630,7 @@ public class MultiGameService {
         if (itemId == 4) seat.cigarettes++;
         int shell = -1;
         int phoneIndex = 0;
+        int refill = 0;                       // 도박 동전: 돌려보낸(다시 받을) 아이템 수
         switch (itemId) {
             case 1 -> game.sawedOff = true;
             case 2 -> shell = Boolean.TRUE.equals(game.chamber.peekFirst()) ? 1 : 0;
@@ -622,6 +645,7 @@ public class MultiGameService {
                 if (first != null) game.chamber.addFirst(!first);
             }
             case REMOTE -> game.turnCw = !game.turnCw;
+            case GAMBLE_COIN -> refill = returnAllItems(seat);
             default -> {
             }
         }
@@ -636,11 +660,55 @@ public class MultiGameService {
         for (Seat s : game.seats) {
             boolean secret = (itemId == 2 || itemId == BURNER_PHONE) && s != seat;   // 돋보기·대포폰으로 안 셸은 쓴 사람만 안다
             packetSender.sendTo(s.userId, PacketType.MULTI_ITEM_USED, new ItemUsed(idx, cell, itemId, secret ? -1 : shell, shellsLeft, health, game.sawedOff,
-                    stolen, fromSeat, secret ? 0 : phoneIndex, game.turnCw));
+                    stolen, fromSeat, secret ? 0 : phoneIndex, game.turnCw, refill));
         }
         if (itemId == JAMMER) later(game, JAMMER_TIMEOUT_SEC * timing.itemUseScale(), () -> onSecondaryTimeout(game, idx, secondaryToken));
         else if (itemId == ADRENALINE) later(game, (ADRENALINE_DELAY_SEC + ADRENALINE_TIMEOUT_SEC) * timing.itemUseScale(), () -> onSecondaryTimeout(game, idx, secondaryToken));
+        else if (itemId == GAMBLE_COIN) {
+            int count = refill;
+            later(game, (ITEM_USE_SEC[itemId] + (stolen ? STOLEN_EXTRA_SEC : 0)) * timing.itemUseScale(), () -> beginRefill(game, idx, count));
+        }
         else later(game, (ITEM_USE_SEC[itemId] + (stolen ? STOLEN_EXTRA_SEC : 0)) * timing.itemUseScale(), () -> afterItem(game, idx));
+    }
+
+    /** 도박 동전: seat의 칸을 전부 비우고 돌려보낸 개수를 돌려준다 (쓴 동전은 이미 칸에서 빠졌다) */
+    private static int returnAllItems(Seat seat) {
+        int n = 0;
+        for (int i = 0; i < SLOTS; i++) {
+            if (seat.cells[i] != 0) n++;
+            seat.cells[i] = 0;
+        }
+        seat.placed = 0;
+        seat.holding = 0;
+        return n;
+    }
+
+    /** 도박 동전 연출이 끝났다: 차례인 사람이 돌려보낸 만큼 상자에서 새 아이템을 받는다 (아이템 받기와 같은 GRAB / PLACE). 돌려보낼 게 없었거나 나갔으면 바로 차례가 이어진다 */
+    private void beginRefill(Game game, int idx, int count) {
+        if (game.phase != Phase.ITEM_USE || game.turnSeat != idx) return;
+        Seat seat = game.seats.get(idx);
+        if (count <= 0 || !seat.alive()) {
+            afterItem(game, idx);
+            return;
+        }
+        game.phase = Phase.COIN_REFILL;
+        seat.target = count;
+        seat.placed = 0;
+        seat.holding = 0;
+        seat.finished = false;
+        log.info("[multi] coin refill seat={} count={}", idx, count);
+        later(game, COIN_REFILL_TIMEOUT_SEC * timing.itemUseScale(), () -> finishRefill(game, idx, true));
+    }
+
+    /** 새 아이템을 다 받았거나(시간이 지났으면 timedOut) 더 받을 수 없다. 잠깐 뒤 상자가 닫히고 차례가 이어진다 */
+    private void finishRefill(Game game, int idx, boolean timedOut) {
+        if (game.phase != Phase.COIN_REFILL || game.turnSeat != idx) return;
+        Seat seat = game.seats.get(idx);
+        seat.finished = true;
+        seat.holding = 0;
+        game.phase = Phase.ITEM_USE;
+        broadcast(game, PacketType.MULTI_ITEM_PHASE_DONE, new ItemPhaseDone(idx, timedOut));
+        later(game, COIN_REFILL_END_SEC * timing.itemUseScale(), () -> afterItem(game, idx));
     }
 
     /**
@@ -694,6 +762,8 @@ public class MultiGameService {
             case 2, 5, INVERTER -> !game.chamber.isEmpty();
             case JAMMER -> jamTargetExists(game, user);
             case 4, BURNER_PHONE, REMOTE -> true;
+            // 도박 동전: 돌려보낼 다른 아이템이 있어야 한다 (자기 칸의 동전은 이 확인 뒤에 칸에서 빠지니, 훔치는 경우가 아니면 동전 자신을 뺀다)
+            case GAMBLE_COIN -> itemCount(game.seats.get(user)) - (stealing ? 0 : 1) >= 1;
             case ADRENALINE -> !stealing && stealableExists(game, user);
             default -> false;
         };
@@ -841,15 +911,22 @@ public class MultiGameService {
     }
 
     /** 원작 GetItemToGrab: 배분하는 아이템 중 그 사람의 개수와 테이블 전체 개수가 상한보다 적은 것에서 무작위 */
-    private int pickItem(Game game, Seat seat) {
+    private int pickItem(Game game, Seat seat, boolean refill) {
         List<Integer> pool = new ArrayList<>();
         for (ItemRule rule : RULES) {
+            if (refill && rule.id() == GAMBLE_COIN) continue;   // 도박 동전으로 다시 받을 때는 동전이 나오지 않는다
             int mine = count(seat, rule.id());
             int all = 0;
-            for (Seat s : game.seats) all += count(s, rule.id());
+            for (Seat s : game.seats) all += count(s, rule.id()) + (s.holding == rule.id() ? 1 : 0);   // 꺼내 들고 있는 것도 센다 (동전이 테이블에 둘이 되지 않게)
             if (mine < rule.perSeat() && all < rule.global()) pool.add(rule.id());
         }
         return pool.isEmpty() ? 0 : pool.get(random.nextInt(pool.size()));
+    }
+
+    private static int itemCount(Seat seat) {
+        int n = 0;
+        for (int c : seat.cells) if (c != 0) n++;
+        return n;
     }
 
     private static int count(Seat seat, int id) {

@@ -486,7 +486,7 @@ public class DevGameRoom {
         Deque<String> types = new ArrayDeque<>();
         ItemSlot[] granted = new ItemSlot[n];
         for (int i = 0; i < n; i++) {
-            String item = fixedPool != null ? pool[random.nextInt(pool.length)] : draw(pool, cigarettes, coins);
+            String item = fixedPool != null ? drawFixed(pool, coins) : draw(pool, cigarettes, coins);
             if (ItemType.CIGARETTE.equals(item)) cigarettes++;
             else if (ItemType.GAMBLE_COIN.equals(item)) coins++;
             types.add(item);
@@ -495,6 +495,14 @@ public class DevGameRoom {
         toPlace.put(userId, types);
         placedCount.put(userId, 0);
         broadcast(PacketType.ITEMS_GRANTED, new ItemsGrantedPacket(userId, granted, count - n));
+    }
+
+    // 테스트 풀에서 하나 뽑는다. 개수 상한은 무시하지만 도박 동전만은 가진 것 + 뽑은 것이 1개를 넘지 않게 한다 (풀에 동전밖에 없으면 그대로)
+    private String drawFixed(String[] pool, int coins) {
+        String item = pool[random.nextInt(pool.length)];
+        if (!ItemType.GAMBLE_COIN.equals(item) || coins < MAX_COINS_HELD) return item;
+        String[] others = Arrays.stream(pool).filter(t -> !ItemType.GAMBLE_COIN.equals(t)).toArray(String[]::new);
+        return others.length == 0 ? item : others[random.nextInt(others.length)];
     }
 
     // 후보에서 하나 뽑는다. 이미 상한만큼 가진 담배·도박 동전은 다시 뽑지 않는다

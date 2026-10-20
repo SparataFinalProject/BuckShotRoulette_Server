@@ -70,7 +70,7 @@ class MultiGameServiceTest {
         game.grabItem(1);
         ItemGrabbed grabbed = last(3, PacketType.MULTI_ITEM_GRABBED, ItemGrabbed.class);
         assertEquals(0, grabbed.seat());
-        assertTrue(grabbed.itemId() >= 1 && grabbed.itemId() <= 10 && grabbed.itemId() != 7);
+        assertTrue(grabbed.itemId() >= 1 && grabbed.itemId() <= 11 && grabbed.itemId() != 7);
 
         game.placeItem(1, 4);
         ItemPlaced placed = last(2, PacketType.MULTI_ITEM_PLACED, ItemPlaced.class);
